@@ -355,56 +355,48 @@ const claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI fo
 // preprocessOAuthBody 对 OAuth 账号的请求做 Claude Code 伪装处理
 // 参考 sub2api：没有正确伪装的请求会被 Anthropic 判定为第三方流量并返回 rate_limit_error
 func preprocessOAuthBody(body []byte, account *sdk.Account) []byte {
-	modelID := gjson.GetBytes(body, "model").String()
-	isHaiku := strings.Contains(strings.ToLower(modelID), "haiku")
-
-	// 1. 非 Haiku 模型：替换 system prompt 为 Claude Code 标准格式
+	// 1. 替换 system prompt 为 Claude Code 标准格式
 	//    真实 Claude Code 始终以 [{type: "text", text: "...", cache_control: {type: "ephemeral"}}] 格式发送
-	//    使用 string 格式或不包含 Claude Code 提示词会被检测为第三方应用
-	if !isHaiku {
-		existingSystem := gjson.GetBytes(body, "system")
-		needsRewrite := !existingSystem.Exists() ||
-			(existingSystem.Type == gjson.String && !strings.Contains(existingSystem.String(), "Claude Code"))
+	//    上游代理对所有模型（含 Haiku）的非 probe 请求都做 system prompt Dice 系数校验
+	existingSystem := gjson.GetBytes(body, "system")
+	needsRewrite := !existingSystem.Exists() ||
+		(existingSystem.Type == gjson.String && !strings.Contains(existingSystem.String(), "Claude Code"))
 
-		if needsRewrite {
-			// 保存原始 system prompt
-			var originalSystem string
-			if existingSystem.Type == gjson.String {
-				originalSystem = existingSystem.String()
-			}
+	if needsRewrite {
+		var originalSystem string
+		if existingSystem.Type == gjson.String {
+			originalSystem = existingSystem.String()
+		}
 
-			// 替换为 Claude Code 标准 system（array 格式 + cache_control）
-			ccSystem := []map[string]any{
-				{
-					"type":          "text",
-					"text":          claudeCodeSystemPrompt,
-					"cache_control": map[string]string{"type": "ephemeral"},
-				},
-			}
-			body, _ = sjson.SetBytes(body, "system", ccSystem)
+		ccSystem := []map[string]any{
+			{
+				"type":          "text",
+				"text":          claudeCodeSystemPrompt,
+				"cache_control": map[string]string{"type": "ephemeral"},
+			},
+		}
+		body, _ = sjson.SetBytes(body, "system", ccSystem)
 
-			// 如果有原始 system prompt，注入到 messages 开头作为 user/assistant 消息对
-			originalSystem = strings.TrimSpace(originalSystem)
-			if originalSystem != "" && originalSystem != claudeCodeSystemPrompt {
-				messages := gjson.GetBytes(body, "messages")
-				if messages.IsArray() {
-					instrMsg := map[string]any{
-						"role":    "user",
-						"content": []map[string]any{{"type": "text", "text": "[System Instructions]\n" + originalSystem}},
-					}
-					ackMsg := map[string]any{
-						"role":    "assistant",
-						"content": []map[string]any{{"type": "text", "text": "Understood. I will follow these instructions."}},
-					}
-					// 重建 messages: [instruction, ack, ...original]
-					newMsgs := []any{instrMsg, ackMsg}
-					for _, msg := range messages.Array() {
-						var m any
-						_ = json.Unmarshal([]byte(msg.Raw), &m)
-						newMsgs = append(newMsgs, m)
-					}
-					body, _ = sjson.SetBytes(body, "messages", newMsgs)
+		// 如果有原始 system prompt，注入到 messages 开头作为 user/assistant 消息对
+		originalSystem = strings.TrimSpace(originalSystem)
+		if originalSystem != "" && originalSystem != claudeCodeSystemPrompt {
+			messages := gjson.GetBytes(body, "messages")
+			if messages.IsArray() {
+				instrMsg := map[string]any{
+					"role":    "user",
+					"content": []map[string]any{{"type": "text", "text": "[System Instructions]\n" + originalSystem}},
 				}
+				ackMsg := map[string]any{
+					"role":    "assistant",
+					"content": []map[string]any{{"type": "text", "text": "Understood. I will follow these instructions."}},
+				}
+				newMsgs := []any{instrMsg, ackMsg}
+				for _, msg := range messages.Array() {
+					var m any
+					_ = json.Unmarshal([]byte(msg.Raw), &m)
+					newMsgs = append(newMsgs, m)
+				}
+				body, _ = sjson.SetBytes(body, "messages", newMsgs)
 			}
 		}
 	}
