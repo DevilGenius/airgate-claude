@@ -1,44 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cssVar } from '@airgate/theme';
+import type {
+  AccountFormProps,
+  PluginBatchAccountInput,
+  PluginOAuthBatchExchangeResult,
+} from '@airgate/theme/plugin';
 
-/** 批量 Session Key 换取结果（单条） */
-export interface BatchExchangeResult {
-  accountType: string;
-  accountName: string;
-  credentials: Record<string, string>;
-  status: 'ok' | 'failed';
-  error?: string;
-}
-
-/** 批量导入账号项 */
-export interface BatchAccountInput {
-  name: string;
-  type: string;
-  credentials: Record<string, string>;
-}
-
-/** 账号表单 Props（由核心 AccountsPage 注入） */
-export interface AccountFormProps {
-  credentials: Record<string, string>;
-  onChange: (credentials: Record<string, string>) => void;
-  mode: 'create' | 'edit';
-  accountType?: string;
-  onAccountTypeChange?: (type: string) => void;
-  onSuggestedName?: (name: string) => void;
-  /** 进入/退出批量模式时通知外层，用于隐藏"下一步/创建"按钮 */
-  onBatchModeChange?: (isBatch: boolean) => void;
-  /** 批量导入账号，由核心侧调用 accountsApi.import 完成落库 */
-  onBatchImport?: (accounts: BatchAccountInput[]) => Promise<{ imported: number; failed: number }>;
-  oauth?: {
-    start: () => Promise<{ authorizeURL: string; state: string }>;
-    exchange: (callbackURL: string) => Promise<{
-      accountType: string;
-      accountName: string;
-      credentials: Record<string, string>;
-    }>;
-    batchExchange?: (sessionKeys: string[]) => Promise<BatchExchangeResult[]>;
-  };
-}
+type BatchExchangeResult = PluginOAuthBatchExchangeResult;
+type BatchAccountInput = PluginBatchAccountInput;
 
 const inputStyle: React.CSSProperties = {
   display: 'block',
@@ -202,6 +171,13 @@ function detectAcquireMethod(accountType?: string, credentials?: Record<string, 
   return 'session_key'; // 默认 session_key，最常用
 }
 
+function parseSessionKeys(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+}
+
 // ── 状态提示组件 ──
 
 function CustomSelect({ value, options, onChange }: { value: string; options: SelectOption[]; onChange: (value: string) => void }) {
@@ -312,17 +288,16 @@ export function AccountForm({
   // 是否处于批量模式（需要隐藏外层"下一步/创建"按钮）
   const isBatchActive =
     category === 'claude_code' && acquireMethod === 'session_key' && sessionKeyMode === 'batch';
+  const sessionKeys = useMemo(() => parseSessionKeys(batchText), [batchText]);
+  const successfulBatchCount = useMemo(
+    () => batchResults.filter((r) => r.status === 'ok').length,
+    [batchResults],
+  );
+  const failedBatchCount = batchResults.length - successfulBatchCount;
 
   useEffect(() => {
     onBatchModeChange?.(isBatchActive);
   }, [isBatchActive, onBatchModeChange]);
-
-  function parseSessionKeys(text: string): string[] {
-    return text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#'));
-  }
 
   const resetBatchState = useCallback(() => {
     setBatchText('');
@@ -336,7 +311,7 @@ export function AccountForm({
       setOauthStatus({ type: 'error', text: '当前环境不支持批量导入' });
       return;
     }
-    const keys = parseSessionKeys(batchText);
+    const keys = sessionKeys;
     if (keys.length === 0) {
       setOauthStatus({ type: 'error', text: '请至少输入一个 Session Key' });
       return;
@@ -362,7 +337,7 @@ export function AccountForm({
       setBatchPhase('input');
       setOauthStatus({ type: 'error', text: err instanceof Error ? err.message : '批量导入失败' });
     }
-  }, [batchText, oauth, onBatchImport]);
+  }, [sessionKeys, oauth, onBatchImport]);
 
   const updateField = useCallback(
     (key: string, value: string) => {
@@ -664,14 +639,14 @@ export function AccountForm({
                         onChange={(e) => setBatchText(e.target.value)}
                       />
                       <div style={{ ...descStyle, marginTop: '0.375rem' }}>
-                        已识别 {parseSessionKeys(batchText).length} 个 Session Key · 成功换取后将自动创建账号
+                        已识别 {sessionKeys.length} 个 Session Key · 成功换取后将自动创建账号
                       </div>
                       <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         <button
                           type="button"
                           onClick={handleBatchImport}
-                          disabled={parseSessionKeys(batchText).length === 0 || !oauth?.batchExchange || !onBatchImport}
-                          style={primaryBtn(parseSessionKeys(batchText).length === 0 || !oauth?.batchExchange || !onBatchImport)}
+                          disabled={sessionKeys.length === 0 || !oauth?.batchExchange || !onBatchImport}
+                          style={primaryBtn(sessionKeys.length === 0 || !oauth?.batchExchange || !onBatchImport)}
                         >
                           批量导入
                         </button>
@@ -692,11 +667,11 @@ export function AccountForm({
                     <div>
                       <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', marginBottom: '0.5rem' }}>
                         <span style={{ color: cssVar('success') }}>
-                          成功 {batchResults.filter((r) => r.status === 'ok').length}
+                          成功 {successfulBatchCount}
                         </span>
-                        {batchResults.filter((r) => r.status === 'failed').length > 0 && (
+                        {failedBatchCount > 0 && (
                           <span style={{ color: cssVar('danger') }}>
-                            失败 {batchResults.filter((r) => r.status === 'failed').length}
+                            失败 {failedBatchCount}
                           </span>
                         )}
                         {batchImportedCount > 0 && (
