@@ -55,8 +55,12 @@ func BuildPluginInfo() sdk.PluginInfo {
 			},
 		},
 		FrontendWidgets: []sdk.FrontendWidget{
+			{Slot: sdk.SlotAccountIdentity, EntryFile: "index.js", Title: "Claude 账号身份"},
 			{Slot: sdk.SlotAccountCreate, EntryFile: "index.js", Title: "创建 Claude 账号"},
 			{Slot: sdk.SlotAccountEdit, EntryFile: "index.js", Title: "编辑 Claude 账号"},
+			{Slot: sdk.SlotAccountUsageWindow, EntryFile: "index.js", Title: "账号用量窗口"},
+			{Slot: sdk.SlotUsageMetricDetail, EntryFile: "index.js", Title: "Claude 计量明细"},
+			{Slot: sdk.SlotUsageCostDetail, EntryFile: "index.js", Title: "Claude 费用明细"},
 		},
 	}
 }
