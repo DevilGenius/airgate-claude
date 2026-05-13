@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/DouDOU-start/airgate-sdk"
-	"github.com/DouDOU-start/airgate-sdk/devserver"
+	"github.com/DouDOU-start/airgate-sdk/devkit/devserver"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 // OAuthDevHandler devserver 的 OAuth HTTP handler
@@ -106,8 +106,8 @@ func (h *OAuthDevHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":          id,
-		"credentials": account.Credentials,
+		"id":           id,
+		"credentials":  account.Credentials,
 		"account_name": account.Name,
 	})
 }

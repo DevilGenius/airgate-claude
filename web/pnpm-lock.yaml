@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@airgate/theme':
-        specifier: file:../../airgate-sdk/frontend
-        version: file:../../airgate-sdk/frontend(react@19.2.5)
+      '@doudou-start/airgate-theme':
+        specifier: file:../../airgate-sdk/theme
+        version: file:../../airgate-sdk/theme(react@19.2.5)
       react:
         specifier: ^19.0.0
         version: 19.2.5
@@ -36,8 +36,8 @@ importers:
 
 packages:
 
-  '@airgate/theme@file:../../airgate-sdk/frontend':
-    resolution: {directory: ../../airgate-sdk/frontend, type: directory}
+  '@doudou-start/airgate-theme@file:../../airgate-sdk/theme':
+    resolution: {directory: ../../airgate-sdk/theme, type: directory}
     peerDependencies:
       react: ^19.0.0
 
@@ -651,7 +651,7 @@ packages:
 
 snapshots:
 
-  '@airgate/theme@file:../../airgate-sdk/frontend(react@19.2.5)':
+  '@doudou-start/airgate-theme@file:../../airgate-sdk/theme(react@19.2.5)':
     dependencies:
       react: 19.2.5
 

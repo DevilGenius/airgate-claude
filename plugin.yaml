@@ -9,9 +9,12 @@ type: gateway
 min_core_version: 1.0.0
 dependencies: []
 frontend_widgets:
-  - slot: account-form
+  - slot: account-create
     entry_file: index.js
-    title: 账号表单
+    title: 创建 Claude 账号
+  - slot: account-edit
+    entry_file: index.js
+    title: 编辑 Claude 账号
 gateway:
   platform: claude
   mode: simple
@@ -28,52 +31,100 @@ gateway:
   models:
     - id: claude-haiku-4-5-20251001
       name: Claude Haiku 4.5
-      max_tokens: 200000
+      context_window: 200000
+      max_output_tokens: 64000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 1
       output_price: 5
-      cache_price: 0.1
+      cached_input_price: 0.1
+      cache_creation_price: 1.25
+      cache_creation_1h_price: 2
     - id: claude-opus-4-1-20250805
       name: Claude Opus 4.1
-      max_tokens: 200000
+      context_window: 200000
+      max_output_tokens: 32000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 15
       output_price: 75
-      cache_price: 1.5
+      cached_input_price: 1.5
+      cache_creation_price: 18.75
+      cache_creation_1h_price: 30
     - id: claude-opus-4-5-20251101
       name: Claude Opus 4.5
-      max_tokens: 200000
+      context_window: 200000
+      max_output_tokens: 64000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 5
       output_price: 25
-      cache_price: 0.5
+      cached_input_price: 0.5
+      cache_creation_price: 6.25
+      cache_creation_1h_price: 10
     - id: claude-opus-4-6
       name: Claude Opus 4.6
-      max_tokens: 1000000
+      context_window: 1000000
+      max_output_tokens: 128000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 5
       output_price: 25
-      cache_price: 0.5
+      cached_input_price: 0.5
+      cache_creation_price: 6.25
+      cache_creation_1h_price: 10
     - id: claude-opus-4-7
       name: Claude Opus 4.7
-      max_tokens: 1000000
+      context_window: 1000000
+      max_output_tokens: 128000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 5
       output_price: 25
-      cache_price: 0.5
+      cached_input_price: 0.5
+      cache_creation_price: 6.25
+      cache_creation_1h_price: 10
     - id: claude-sonnet-4-20250514
       name: Claude Sonnet 4
-      max_tokens: 200000
+      context_window: 200000
+      max_output_tokens: 64000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 3
       output_price: 15
-      cache_price: 0.3
+      cached_input_price: 0.3
+      cache_creation_price: 3.75
+      cache_creation_1h_price: 6
     - id: claude-sonnet-4-5-20250929
       name: Claude Sonnet 4.5
-      max_tokens: 200000
+      context_window: 200000
+      max_output_tokens: 64000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 3
       output_price: 15
-      cache_price: 0.3
+      cached_input_price: 0.3
+      cache_creation_price: 3.75
+      cache_creation_1h_price: 6
     - id: claude-sonnet-4-6
       name: Claude Sonnet 4.6
-      max_tokens: 1000000
+      context_window: 1000000
+      max_output_tokens: 64000
+      capabilities:
+        - chat
+        - reasoning
       input_price: 3
       output_price: 15
-      cache_price: 0.3
+      cached_input_price: 0.3
+      cache_creation_price: 3.75
+      cache_creation_1h_price: 6
   account_types:
     - key: apikey
       label: API Key

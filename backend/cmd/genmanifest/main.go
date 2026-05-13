@@ -10,19 +10,19 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/DouDOU-start/airgate-claude/backend/internal/gateway"
-	sdk "github.com/DouDOU-start/airgate-sdk"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 const generatedComment = "# 本文件由 backend/cmd/genmanifest 自动生成，请勿手工修改。\n\n"
 
 type manifest struct {
-	ID             string           `yaml:"id"`
-	Name           string           `yaml:"name"`
-	Version        string           `yaml:"version"`
-	Description    string           `yaml:"description"`
-	Author         string           `yaml:"author"`
-	Type           string           `yaml:"type"`
-	MinCoreVersion string           `yaml:"min_core_version"`
+	ID              string           `yaml:"id"`
+	Name            string           `yaml:"name"`
+	Version         string           `yaml:"version"`
+	Description     string           `yaml:"description"`
+	Author          string           `yaml:"author"`
+	Type            string           `yaml:"type"`
+	MinCoreVersion  string           `yaml:"min_core_version"`
 	Dependencies    []string         `yaml:"dependencies"`
 	FrontendWidgets []frontendWidget `yaml:"frontend_widgets,omitempty"`
 	Gateway         *gatewayManifest `yaml:"gateway,omitempty"`
@@ -43,12 +43,16 @@ type routeDef struct {
 }
 
 type modelInfo struct {
-	ID          string  `yaml:"id"`
-	Name        string  `yaml:"name"`
-	MaxTokens   int     `yaml:"max_tokens"`
-	InputPrice  float64 `yaml:"input_price"`
-	OutputPrice float64 `yaml:"output_price"`
-	CachePrice  float64 `yaml:"cache_price,omitempty"`
+	ID                   string   `yaml:"id"`
+	Name                 string   `yaml:"name"`
+	ContextWindow        int      `yaml:"context_window"`
+	MaxOutputTokens      int      `yaml:"max_output_tokens"`
+	Capabilities         []string `yaml:"capabilities,omitempty"`
+	InputPrice           float64  `yaml:"input_price"`
+	OutputPrice          float64  `yaml:"output_price"`
+	CachedInputPrice     float64  `yaml:"cached_input_price,omitempty"`
+	CacheCreationPrice   float64  `yaml:"cache_creation_price,omitempty"`
+	CacheCreation1hPrice float64  `yaml:"cache_creation_1h_price,omitempty"`
 }
 
 type accountType struct {
@@ -98,12 +102,12 @@ func renderManifest() ([]byte, error) {
 	info := plugin.Info()
 
 	doc := manifest{
-		ID:             info.ID,
-		Name:           info.Name,
-		Version:        info.Version,
-		Description:    info.Description,
-		Author:         info.Author,
-		Type:           string(info.Type),
+		ID:              info.ID,
+		Name:            info.Name,
+		Version:         info.Version,
+		Description:     info.Description,
+		Author:          info.Author,
+		Type:            string(info.Type),
 		MinCoreVersion:  gateway.PluginMinCoreVersion,
 		Dependencies:    gateway.PluginDependencies(),
 		FrontendWidgets: convertFrontendWidgets(info.FrontendWidgets),
@@ -111,7 +115,7 @@ func renderManifest() ([]byte, error) {
 			Platform:     plugin.Platform(),
 			Mode:         gateway.PluginMode,
 			Routes:       convertRoutes(plugin.Routes()),
-			Models:       convertModels(plugin.Models()),
+			Models:       convertModels(gateway.AllPricingSpecs()),
 			AccountTypes: convertAccountTypes(info.AccountTypes),
 		},
 	}
@@ -152,16 +156,21 @@ func convertRoutes(routes []sdk.RouteDefinition) []routeDef {
 	return items
 }
 
-func convertModels(models []sdk.ModelInfo) []modelInfo {
+func convertModels(models []gateway.NamedSpec) []modelInfo {
 	items := make([]modelInfo, 0, len(models))
-	for _, model := range models {
+	for _, item := range models {
+		spec := item.Spec
 		items = append(items, modelInfo{
-			ID:          model.ID,
-			Name:        model.Name,
-			MaxTokens:   model.ContextWindow,
-			InputPrice:  model.InputPrice,
-			OutputPrice: model.OutputPrice,
-			CachePrice:  model.CachedInputPrice,
+			ID:                   item.ID,
+			Name:                 spec.Name,
+			ContextWindow:        spec.ContextWindow,
+			MaxOutputTokens:      spec.MaxOutputTokens,
+			Capabilities:         []string{sdk.ModelCapChat, sdk.ModelCapReasoning},
+			InputPrice:           spec.InputPrice,
+			OutputPrice:          spec.OutputPrice,
+			CachedInputPrice:     spec.CachedPrice,
+			CacheCreationPrice:   spec.CacheCreationPrice,
+			CacheCreation1hPrice: spec.CacheCreation1hPrice,
 		})
 	}
 	return items

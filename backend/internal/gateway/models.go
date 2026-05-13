@@ -2,10 +2,11 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
-	sdk "github.com/DouDOU-start/airgate-sdk"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 // Spec 单个模型的完整元数据
@@ -40,6 +41,27 @@ var modelRegistry = map[string]Spec{
 	"claude-haiku-4-5-20251001": {"Claude Haiku 4.5", 200000, 64000, 1.0, 0.1, 1.25, 2.0, 5.0},
 }
 
+const (
+	usageCurrencyUSD = "USD"
+
+	usageAttrModel = "model"
+
+	usageMetricInputTokens           = "input_tokens"
+	usageMetricCachedInputTokens     = "cached_input_tokens"
+	usageMetricCacheCreationTokens   = "cache_creation_input_tokens"
+	usageMetricCacheCreation5mTokens = "cache_creation_5m_input_tokens"
+	usageMetricCacheCreation1hTokens = "cache_creation_1h_input_tokens"
+	usageMetricOutputTokens          = "output_tokens"
+	usageMetricReasoningOutputTokens = "reasoning_output_tokens"
+	usageMetricTotalTokens           = "total_tokens"
+
+	usageCostInput           = "input_tokens"
+	usageCostCachedInput     = "cached_input_tokens"
+	usageCostCacheCreation5m = "cache_creation_5m_input_tokens"
+	usageCostCacheCreation1h = "cache_creation_1h_input_tokens"
+	usageCostOutput          = "output_tokens"
+)
+
 // ModelIDOverrides 短名到长名的映射
 var ModelIDOverrides = map[string]string{
 	"claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
@@ -67,53 +89,57 @@ func NormalizeModelID(id string) string {
 // AllModelSpecs 返回所有注册模型的 SDK ModelInfo 列表
 func AllModelSpecs() []sdk.ModelInfo {
 	models := make([]sdk.ModelInfo, 0, len(modelRegistry))
-	for id, spec := range modelRegistry {
-		models = append(models, sdk.ModelInfo{
-			ID:                   id,
-			Name:                 spec.Name,
-			ContextWindow:        spec.ContextWindow,
-			MaxOutputTokens:      spec.MaxOutputTokens,
-			InputPrice:           spec.InputPrice,
-			OutputPrice:          spec.OutputPrice,
-			CachedInputPrice:     spec.CachedPrice,
-			CacheCreationPrice:   spec.CacheCreationPrice,
-			CacheCreation1hPrice: spec.CacheCreation1hPrice,
-		})
+	for _, item := range AllPricingSpecs() {
+		models = append(models, specToModelInfo(item.ID, item.Spec))
 	}
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].ID < models[j].ID
-	})
 	return models
 }
 
+// NamedSpec 是带模型 ID 的插件私有规格。
+type NamedSpec struct {
+	ID   string
+	Spec Spec
+}
+
+// AllPricingSpecs 返回带价格的插件私有模型规格，用于 manifest 生成和计费。
+func AllPricingSpecs() []NamedSpec {
+	items := make([]NamedSpec, 0, len(modelRegistry))
+	for id, spec := range modelRegistry {
+		items = append(items, NamedSpec{ID: id, Spec: spec})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ID < items[j].ID
+	})
+	return items
+}
+
 // fallbackModel 兜底模型（未知模型按 Sonnet 4.6 计费，最常用的中端模型）
-var fallbackModel = sdk.ModelInfo{
-	ID:                   "claude-sonnet-4-6",
-	Name:                 "Claude Sonnet 4.6 (fallback)",
+var fallbackSpec = Spec{
+	Name:                 "Claude Sonnet 4.6",
 	ContextWindow:        1000000,
 	MaxOutputTokens:      64000,
 	InputPrice:           3.0,
-	OutputPrice:          15.0,
-	CachedInputPrice:     0.3,
+	CachedPrice:          0.3,
 	CacheCreationPrice:   3.75,
 	CacheCreation1hPrice: 6.0,
+	OutputPrice:          15.0,
 }
 
-// LookupModel 查找模型元数据，未知模型返回兜底模型
-func LookupModel(modelID string) *sdk.ModelInfo {
+// LookupModelSpec 查找模型计费规格，未知模型返回兜底规格。
+func LookupModelSpec(modelID string) (string, Spec) {
 	// 精确匹配
 	if spec, ok := modelRegistry[modelID]; ok {
-		return specToModelInfo(modelID, spec)
+		return modelID, spec
 	}
 	// 规范化后匹配
 	normalized := NormalizeModelID(modelID)
 	if spec, ok := modelRegistry[normalized]; ok {
-		return specToModelInfo(normalized, spec)
+		return normalized, spec
 	}
 	// 前缀模糊匹配（如 claude-opus-4-6-xxx 匹配 claude-opus-4-6）
 	for id, spec := range modelRegistry {
 		if strings.HasPrefix(modelID, id) {
-			return specToModelInfo(id, spec)
+			return id, spec
 		}
 	}
 	// 关键词匹配（从模型名推断系列）
@@ -121,66 +147,335 @@ func LookupModel(modelID string) *sdk.ModelInfo {
 	switch {
 	case strings.Contains(lower, "opus"):
 		if spec, ok := modelRegistry["claude-opus-4-7"]; ok {
-			return specToModelInfo("claude-opus-4-7", spec)
+			return "claude-opus-4-7", spec
 		}
 	case strings.Contains(lower, "haiku"):
 		if spec, ok := modelRegistry["claude-haiku-4-5-20251001"]; ok {
-			return specToModelInfo("claude-haiku-4-5-20251001", spec)
+			return "claude-haiku-4-5-20251001", spec
 		}
 	case strings.Contains(lower, "sonnet"):
 		if spec, ok := modelRegistry["claude-sonnet-4-6"]; ok {
-			return specToModelInfo("claude-sonnet-4-6", spec)
+			return "claude-sonnet-4-6", spec
 		}
 	}
 	// 兜底：按 Sonnet 4.6 计费
-	fb := fallbackModel
-	return &fb
+	return "claude-sonnet-4-6", fallbackSpec
 }
 
-func specToModelInfo(id string, spec Spec) *sdk.ModelInfo {
-	return &sdk.ModelInfo{
-		ID:                   id,
-		Name:                 spec.Name,
-		ContextWindow:        spec.ContextWindow,
-		MaxOutputTokens:      spec.MaxOutputTokens,
-		InputPrice:           spec.InputPrice,
-		OutputPrice:          spec.OutputPrice,
-		CachedInputPrice:     spec.CachedPrice,
-		CacheCreationPrice:   spec.CacheCreationPrice,
-		CacheCreation1hPrice: spec.CacheCreation1hPrice,
+func specToModelInfo(id string, spec Spec) sdk.ModelInfo {
+	return sdk.ModelInfo{
+		ID:              id,
+		Name:            spec.Name,
+		ContextWindow:   spec.ContextWindow,
+		MaxOutputTokens: spec.MaxOutputTokens,
+		Capabilities:    []string{sdk.ModelCapChat, sdk.ModelCapReasoning},
 	}
 }
 
-// fillUsageCost 根据 Usage 中的 token 数和模型价格填充费用 / 单价字段。
-// 未知 model 会通过 LookupModel 兜底到 Sonnet 价格。
+type tokenUsage struct {
+	inputTokens           int
+	outputTokens          int
+	cachedInputTokens     int
+	cacheCreationTokens   int
+	cacheCreation5mTokens int
+	cacheCreation1hTokens int
+	reasoningOutputTokens int
+}
+
+func newTokenUsage(modelID string, tokens tokenUsage, firstTokenMs int64) *sdk.Usage {
+	usage := &sdk.Usage{
+		Model:        modelID,
+		Currency:     usageCurrencyUSD,
+		FirstTokenMs: firstTokenMs,
+	}
+	setUsageModelAttribute(usage, modelID)
+	setUsageTokens(usage, tokens)
+	return usage
+}
+
+func setUsageModelAttribute(usage *sdk.Usage, modelID string) {
+	if usage == nil || modelID == "" {
+		return
+	}
+	setUsageAttribute(usage, sdk.UsageAttribute{
+		Key:   usageAttrModel,
+		Label: "模型",
+		Kind:  "model",
+		Value: modelID,
+	})
+}
+
+func setUsageTokens(usage *sdk.Usage, tokens tokenUsage) {
+	if usage == nil {
+		return
+	}
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricInputTokens,
+		Label: "输入 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.inputTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricCachedInputTokens,
+		Label: "缓存输入 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.cachedInputTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricCacheCreationTokens,
+		Label: "缓存写入 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.cacheCreationTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricCacheCreation5mTokens,
+		Label: "缓存写入 Token 5m",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.cacheCreation5mTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricCacheCreation1hTokens,
+		Label: "缓存写入 Token 1h",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.cacheCreation1hTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricOutputTokens,
+		Label: "输出 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.outputTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricReasoningOutputTokens,
+		Label: "推理 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.reasoningOutputTokens),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:   usageMetricTotalTokens,
+		Label: "总 Token",
+		Kind:  "token",
+		Unit:  "token",
+		Value: float64(tokens.inputTokens + tokens.cachedInputTokens + tokens.cacheCreationTokens + tokens.outputTokens),
+	})
+}
+
+func usageMetricInt(usage *sdk.Usage, key string) int {
+	return int(usageMetricValue(usage, key))
+}
+
+func usageMetricValue(usage *sdk.Usage, key string) float64 {
+	if usage == nil {
+		return 0
+	}
+	for _, metric := range usage.Metrics {
+		if metric.Key == key {
+			return metric.Value
+		}
+	}
+	return 0
+}
+
+func setUsageAttribute(usage *sdk.Usage, attr sdk.UsageAttribute) {
+	for i := range usage.Attributes {
+		if usage.Attributes[i].Key == attr.Key {
+			usage.Attributes[i] = attr
+			return
+		}
+	}
+	usage.Attributes = append(usage.Attributes, attr)
+}
+
+func setUsageMetric(usage *sdk.Usage, metric sdk.UsageMetric) {
+	for i := range usage.Metrics {
+		if usage.Metrics[i].Key == metric.Key {
+			usage.Metrics[i] = metric
+			return
+		}
+	}
+	usage.Metrics = append(usage.Metrics, metric)
+}
+
+func setUsageCostDetail(usage *sdk.Usage, detail sdk.UsageCostDetail) {
+	if detail.AccountCost <= 0 {
+		removeUsageCostDetail(usage, detail.Key)
+		return
+	}
+	for i := range usage.CostDetails {
+		if usage.CostDetails[i].Key == detail.Key {
+			usage.CostDetails[i] = detail
+			recomputeUsageAccountCost(usage)
+			return
+		}
+	}
+	usage.CostDetails = append(usage.CostDetails, detail)
+	recomputeUsageAccountCost(usage)
+}
+
+func removeUsageCostDetail(usage *sdk.Usage, key string) {
+	if usage == nil {
+		return
+	}
+	for i := range usage.CostDetails {
+		if usage.CostDetails[i].Key == key {
+			usage.CostDetails = append(usage.CostDetails[:i], usage.CostDetails[i+1:]...)
+			recomputeUsageAccountCost(usage)
+			return
+		}
+	}
+}
+
+func recomputeUsageAccountCost(usage *sdk.Usage) {
+	if usage == nil {
+		return
+	}
+	var total float64
+	for _, detail := range usage.CostDetails {
+		total += detail.AccountCost
+	}
+	usage.AccountCost = total
+	if usage.Currency == "" {
+		usage.Currency = usageCurrencyUSD
+	}
+}
+
+func tokenCost(tokens int, pricePerMillion float64) float64 {
+	if tokens <= 0 || pricePerMillion <= 0 {
+		return 0
+	}
+	return float64(tokens) * pricePerMillion / 1_000_000
+}
+
+func priceMetadata(price float64, pricingModel string) map[string]string {
+	metadata := map[string]string{
+		"unit_price": fmt.Sprintf("%.10g", price),
+		"unit":       "USD/1M tokens",
+	}
+	if pricingModel != "" {
+		metadata["pricing_model"] = pricingModel
+	}
+	return metadata
+}
+
+// fillUsageCost 根据 Usage 中的 token 计量和插件私有价格表填充费用。
+// 未知 model 只在计费规格上兜底，Usage.Model 仍保持上游实际返回值。
 func fillUsageCost(usage *sdk.Usage) {
 	if usage == nil || usage.Model == "" {
 		return
 	}
-	model := LookupModel(usage.Model)
-	if model == nil {
-		return
+
+	pricingModel, spec := LookupModelSpec(usage.Model)
+	inputTokens := usageMetricInt(usage, usageMetricInputTokens)
+	outputTokens := usageMetricInt(usage, usageMetricOutputTokens)
+	cachedInputTokens := usageMetricInt(usage, usageMetricCachedInputTokens)
+	cacheCreationTokens := usageMetricInt(usage, usageMetricCacheCreationTokens)
+	cacheCreation5mTokens := usageMetricInt(usage, usageMetricCacheCreation5mTokens)
+	cacheCreation1hTokens := usageMetricInt(usage, usageMetricCacheCreation1hTokens)
+
+	genericCacheCreationTokens := cacheCreationTokens - cacheCreation5mTokens - cacheCreation1hTokens
+	if genericCacheCreationTokens < 0 {
+		genericCacheCreationTokens = 0
 	}
+	billableCacheCreation5mTokens := cacheCreation5mTokens + genericCacheCreationTokens
 
-	cost := sdk.CalculateCost(sdk.CostInput{
-		InputTokens:           usage.InputTokens,
-		OutputTokens:          usage.OutputTokens,
-		CachedInputTokens:     usage.CachedInputTokens,
-		CacheCreationTokens:   usage.CacheCreationTokens,
-		CacheCreation5mTokens: usage.CacheCreation5mTokens,
-		CacheCreation1hTokens: usage.CacheCreation1hTokens,
-		ServiceTier:           usage.ServiceTier,
-	}, *model)
+	inputCost := tokenCost(inputTokens, spec.InputPrice)
+	cachedCost := tokenCost(cachedInputTokens, spec.CachedPrice)
+	cacheCreation5mCost := tokenCost(billableCacheCreation5mTokens, spec.CacheCreationPrice)
+	cacheCreation1hCost := tokenCost(cacheCreation1hTokens, spec.CacheCreation1hPrice)
+	outputCost := tokenCost(outputTokens, spec.OutputPrice)
 
-	usage.InputCost = cost.InputCost
-	usage.OutputCost = cost.OutputCost
-	usage.CachedInputCost = cost.CachedInputCost
-	usage.CacheCreationCost = cost.CacheCreationCost
-	usage.InputPrice = model.InputPrice
-	usage.OutputPrice = model.OutputPrice
-	usage.CachedInputPrice = model.CachedInputPrice
-	usage.CacheCreationPrice = model.CacheCreationPrice
-	usage.CacheCreation1hPrice = model.CacheCreation1hPrice
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:         usageMetricInputTokens,
+		Label:       "输入 Token",
+		Kind:        "token",
+		Unit:        "token",
+		Value:       float64(inputTokens),
+		AccountCost: inputCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.InputPrice, pricingModel),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:         usageMetricCachedInputTokens,
+		Label:       "缓存输入 Token",
+		Kind:        "token",
+		Unit:        "token",
+		Value:       float64(cachedInputTokens),
+		AccountCost: cachedCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CachedPrice, pricingModel),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:         usageMetricCacheCreation5mTokens,
+		Label:       "缓存写入 Token 5m",
+		Kind:        "token",
+		Unit:        "token",
+		Value:       float64(billableCacheCreation5mTokens),
+		AccountCost: cacheCreation5mCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CacheCreationPrice, pricingModel),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:         usageMetricCacheCreation1hTokens,
+		Label:       "缓存写入 Token 1h",
+		Kind:        "token",
+		Unit:        "token",
+		Value:       float64(cacheCreation1hTokens),
+		AccountCost: cacheCreation1hCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CacheCreation1hPrice, pricingModel),
+	})
+	setUsageMetric(usage, sdk.UsageMetric{
+		Key:         usageMetricOutputTokens,
+		Label:       "输出 Token",
+		Kind:        "token",
+		Unit:        "token",
+		Value:       float64(outputTokens),
+		AccountCost: outputCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.OutputPrice, pricingModel),
+	})
+	setUsageCostDetail(usage, sdk.UsageCostDetail{
+		Key:         usageCostInput,
+		Label:       "输入 Token",
+		AccountCost: inputCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.InputPrice, pricingModel),
+	})
+	setUsageCostDetail(usage, sdk.UsageCostDetail{
+		Key:         usageCostCachedInput,
+		Label:       "缓存输入 Token",
+		AccountCost: cachedCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CachedPrice, pricingModel),
+	})
+	setUsageCostDetail(usage, sdk.UsageCostDetail{
+		Key:         usageCostCacheCreation5m,
+		Label:       "缓存写入 Token 5m",
+		AccountCost: cacheCreation5mCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CacheCreationPrice, pricingModel),
+	})
+	setUsageCostDetail(usage, sdk.UsageCostDetail{
+		Key:         usageCostCacheCreation1h,
+		Label:       "缓存写入 Token 1h",
+		AccountCost: cacheCreation1hCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.CacheCreation1hPrice, pricingModel),
+	})
+	setUsageCostDetail(usage, sdk.UsageCostDetail{
+		Key:         usageCostOutput,
+		Label:       "输出 Token",
+		AccountCost: outputCost,
+		Currency:    usageCurrencyUSD,
+		Metadata:    priceMetadata(spec.OutputPrice, pricingModel),
+	})
 }
 
 // claudeModelListEntry Anthropic /v1/models 接口返回的单个模型

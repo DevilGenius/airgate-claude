@@ -20,7 +20,7 @@ AirGate Anthropic 是 [airgate-core](https://github.com/DouDOU-start/airgate-cor
 - **进程内 Token 刷新锁** — 基于 sync.Mutex 的 per-account 并发保护，double-check 防止重复刷新，不可重试错误自动分类 + 60 秒冷却窗口
 - **TLS 指纹伪装** — OAuth/session_key 账号使用 uTLS 模拟 Claude CLI 2.x 的 JA3 指纹，API Key 账号使用标准 TLS
 - **连接池复用** — 标准 TLS 和 uTLS 指纹各自独立连接池，按 proxyURL 分桶缓存 Transport，避免每次请求创建新连接
-- **精确成本计算** — 基于 SDK 的 `CalculateCost()` 填充 InputCost/OutputCost/CachedInputCost，支持 standard/priority/flex 计费层级
+- **精确成本计算** — 插件内按 Anthropic 定价填充 `UsageMetric` / `UsageCostDetail`，支持 standard/priority/flex 计费层级
 - **流式 Usage 提取** — SSE 流中实时提取 input_tokens、output_tokens、cache_read_input_tokens、reasoning_output_tokens，记录 FirstTokenMs
 - **Console 批量导入** — 支持通过 Session Key 批量一键创建 OAuth/Setup Token 账号
 - **完整前端 Widget** — 四种账号类型的表单面板，OAuth 授权引导、Session Key 一键获取、状态展示
@@ -216,7 +216,7 @@ airgate-claude/
 - **Token 刷新安全** — per-account mutex + double-check + 不可重试错误分类（移植自 sub2api 的 `OAuthRefreshAPI` 模式）
 - **连接池分桶** — StandardTransportPool（API Key）和 FingerprintTransportPool（OAuth）各自独立，按 proxyURL 缓存，Init 创建 Stop 清理
 - **统一 Base URL** — 所有账号类型通过 `resolveBaseURL()` 统一解析 `base_url` credential，消除硬编码
-- **成本计算在插件内完成** — `fillCost()` 调用 SDK 的 `CalculateCost()`，Core 只做倍率乘法不关心模型定价
+- **成本计算在插件内完成** — `fillCost()` 写入通用 Usage 指标和费用明细，Core 只做倍率乘法不关心模型定价
 - **组织选择逻辑** — 多组织时优先选 `raven_type == "team"` 的组织（对齐 sub2api）
 
 ## 相关项目

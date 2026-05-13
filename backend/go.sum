@@ -1,5 +1,3 @@
-github.com/DouDOU-start/airgate-sdk v0.0.0-20260412142440-cf78d51d7cd9 h1:RLkz6eoqW/5hIU1ppKlgRmozd96kU3WEiuvXVF5X96k=
-github.com/DouDOU-start/airgate-sdk v0.0.0-20260412142440-cf78d51d7cd9/go.mod h1:Ll8rGvyw2B/yekG7wXcQBDJLYUatKBo3T00lp5Hbnw8=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=
 github.com/andybalholm/brotli v1.2.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=

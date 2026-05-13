@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/DouDOU-start/airgate-sdk"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 // AnthropicGateway Claude 网关插件
@@ -162,7 +162,7 @@ func (g *AnthropicGateway) ValidateAccount(ctx context.Context, credentials map[
 }
 
 // QueryQuota 查询账号额度
-func (g *AnthropicGateway) QueryQuota(ctx context.Context, credentials map[string]string) (*sdk.QuotaInfo, error) {
+func (g *AnthropicGateway) QueryQuota(ctx context.Context, credentials map[string]string) (*quotaInfo, error) {
 	accessToken := credentials["access_token"]
 	if accessToken == "" {
 		return nil, sdk.ErrNotSupported
@@ -190,7 +190,7 @@ func (g *AnthropicGateway) QueryQuota(ctx context.Context, credentials map[strin
 		}
 	}
 
-	return &sdk.QuotaInfo{
+	return &quotaInfo{
 		Extra: extra,
 	}, nil
 }
@@ -314,7 +314,7 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 		}), nil
 
 	case "usage/accounts":
-		// 查询多个账号的用量（使用 SDK 标准 AccountUsageAccountsResponse 格式）
+		// 查询多个账号的用量，响应结构保持插件私有，避免把平台窗口模型固化到 SDK。
 		var accounts []struct {
 			ID          int64             `json:"id"`
 			Credentials map[string]string `json:"credentials"`
@@ -324,8 +324,8 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 		}
 
 		now := time.Now()
-		resp := sdk.AccountUsageAccountsResponse{
-			Accounts: make(map[string]sdk.AccountUsageInfo),
+		resp := accountUsageAccountsResponse{
+			Accounts: make(map[string]accountUsageInfo),
 		}
 
 		for _, a := range accounts {
@@ -336,7 +336,7 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 
 			usageResp, err := g.fetchUsage(ctx, accessToken, a.Credentials["proxy_url"])
 			if err != nil {
-				resp.Errors = append(resp.Errors, sdk.AccountUsageError{
+				resp.Errors = append(resp.Errors, accountUsageError{
 					ID:      a.ID,
 					Message: err.Error(),
 				})
@@ -346,7 +346,7 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 				continue
 			}
 
-			info := sdk.AccountUsageInfo{
+			info := accountUsageInfo{
 				UpdatedAt: now.UTC().Format(time.RFC3339),
 			}
 
@@ -354,11 +354,11 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 			appendUsageWindow := func(key, label string, utilization float64, resetsAt string) {
 				if resetsAt != "" {
 					if resetAt, err := time.Parse(time.RFC3339, resetsAt); err == nil {
-						info.Windows = append(info.Windows, sdk.NewAccountUsageWindow(key, label, utilization, &resetAt, now))
+						info.Windows = append(info.Windows, newAccountUsageWindow(key, label, utilization, &resetAt, now))
 						return
 					}
 				}
-				info.Windows = append(info.Windows, sdk.NewAccountUsageWindow(key, label, utilization, nil, now))
+				info.Windows = append(info.Windows, newAccountUsageWindow(key, label, utilization, nil, now))
 			}
 
 			appendUsageWindow("5h", "5h", usageResp.FiveHour.Utilization, usageResp.FiveHour.ResetsAt)

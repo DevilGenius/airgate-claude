@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	sdk "github.com/DouDOU-start/airgate-sdk"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 // 构造 ForwardOutcome 的 helper，让各转发路径不重复写 struct literal。

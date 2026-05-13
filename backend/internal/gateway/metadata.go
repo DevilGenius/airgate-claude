@@ -1,6 +1,6 @@
 package gateway
 
-import sdk "github.com/DouDOU-start/airgate-sdk"
+import sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 
 //go:generate go run ../../cmd/genmanifest
 
@@ -26,6 +26,7 @@ func BuildPluginInfo() sdk.PluginInfo {
 		ID:          PluginID,
 		Name:        PluginDisplayName,
 		Version:     PluginVersion,
+		SDKVersion:  sdk.SDKVersion,
 		Description: PluginDescription,
 		Author:      PluginAuthor,
 		Type:        sdk.PluginTypeGateway,
@@ -54,7 +55,8 @@ func BuildPluginInfo() sdk.PluginInfo {
 			},
 		},
 		FrontendWidgets: []sdk.FrontendWidget{
-			{Slot: sdk.SlotAccountForm, EntryFile: "index.js", Title: "账号表单"},
+			{Slot: sdk.SlotAccountCreate, EntryFile: "index.js", Title: "创建 Claude 账号"},
+			{Slot: sdk.SlotAccountEdit, EntryFile: "index.js", Title: "编辑 Claude 账号"},
 		},
 	}
 }

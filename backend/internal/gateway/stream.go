@@ -11,7 +11,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	sdk "github.com/DouDOU-start/airgate-sdk"
+	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
 )
 
 // SSE 流式响应透传 + usage 提取。调用者保证 resp.StatusCode 是 2xx（4xx/5xx 由 handleErrorResponse 处理）。
@@ -25,7 +25,8 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(resp.StatusCode)
 
-	usage := &sdk.Usage{}
+	usage := &sdk.Usage{Currency: usageCurrencyUSD}
+	var tokens tokenUsage
 	var firstTokenOnce sync.Once
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -51,7 +52,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 				usage.FirstTokenMs = time.Since(start).Milliseconds()
 			})
 		}
-		extractAnthropicUsage(data, eventType, usage)
+		extractAnthropicUsage(data, eventType, usage, &tokens)
 	}
 
 	elapsed := time.Since(start)
@@ -76,17 +77,15 @@ func handleNonStreamResponse(resp *http.Response, w http.ResponseWriter, start t
 		return transientOutcome(reason), fmt.Errorf("%s", reason)
 	}
 
-	usage := &sdk.Usage{
-		InputTokens:           int(gjson.GetBytes(body, "usage.input_tokens").Int()),
-		OutputTokens:          int(gjson.GetBytes(body, "usage.output_tokens").Int()),
-		CachedInputTokens:     int(gjson.GetBytes(body, "usage.cache_read_input_tokens").Int()),
-		CacheCreationTokens:   int(gjson.GetBytes(body, "usage.cache_creation_input_tokens").Int()),
-		CacheCreation5mTokens: int(gjson.GetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens").Int()),
-		CacheCreation1hTokens: int(gjson.GetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens").Int()),
-		ReasoningOutputTokens: int(gjson.GetBytes(body, "usage.reasoning_output_tokens").Int()),
-		Model:                 gjson.GetBytes(body, "model").String(),
-		FirstTokenMs:          time.Since(start).Milliseconds(),
-	}
+	usage := newTokenUsage(gjson.GetBytes(body, "model").String(), tokenUsage{
+		inputTokens:           int(gjson.GetBytes(body, "usage.input_tokens").Int()),
+		outputTokens:          int(gjson.GetBytes(body, "usage.output_tokens").Int()),
+		cachedInputTokens:     int(gjson.GetBytes(body, "usage.cache_read_input_tokens").Int()),
+		cacheCreationTokens:   int(gjson.GetBytes(body, "usage.cache_creation_input_tokens").Int()),
+		cacheCreation5mTokens: int(gjson.GetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens").Int()),
+		cacheCreation1hTokens: int(gjson.GetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens").Int()),
+		reasoningOutputTokens: int(gjson.GetBytes(body, "usage.reasoning_output_tokens").Int()),
+	}, time.Since(start).Milliseconds())
 	fillUsageCost(usage)
 
 	headers := resp.Header.Clone()
@@ -117,21 +116,27 @@ func extractSSEData(line string) (string, bool) {
 	return strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")), true
 }
 
-// extractAnthropicUsage 把 Anthropic SSE data 中的 usage 字段累加到 sdk.Usage。
-func extractAnthropicUsage(data string, eventType string, usage *sdk.Usage) {
+// extractAnthropicUsage 把 Anthropic SSE data 中的 usage 字段累加到通用 Usage。
+func extractAnthropicUsage(data string, eventType string, usage *sdk.Usage, tokens *tokenUsage) {
+	if usage == nil || tokens == nil {
+		return
+	}
 	switch eventType {
 	case "message_start":
-		usage.InputTokens = int(gjson.Get(data, "message.usage.input_tokens").Int())
-		usage.CachedInputTokens = int(gjson.Get(data, "message.usage.cache_read_input_tokens").Int())
-		usage.CacheCreationTokens = int(gjson.Get(data, "message.usage.cache_creation_input_tokens").Int())
-		usage.CacheCreation5mTokens = int(gjson.Get(data, "message.usage.cache_creation.ephemeral_5m_input_tokens").Int())
-		usage.CacheCreation1hTokens = int(gjson.Get(data, "message.usage.cache_creation.ephemeral_1h_input_tokens").Int())
+		tokens.inputTokens = int(gjson.Get(data, "message.usage.input_tokens").Int())
+		tokens.cachedInputTokens = int(gjson.Get(data, "message.usage.cache_read_input_tokens").Int())
+		tokens.cacheCreationTokens = int(gjson.Get(data, "message.usage.cache_creation_input_tokens").Int())
+		tokens.cacheCreation5mTokens = int(gjson.Get(data, "message.usage.cache_creation.ephemeral_5m_input_tokens").Int())
+		tokens.cacheCreation1hTokens = int(gjson.Get(data, "message.usage.cache_creation.ephemeral_1h_input_tokens").Int())
 		usage.Model = gjson.Get(data, "message.model").String()
+		setUsageModelAttribute(usage, usage.Model)
+		setUsageTokens(usage, *tokens)
 
 	case "message_delta":
-		usage.OutputTokens = int(gjson.Get(data, "usage.output_tokens").Int())
+		tokens.outputTokens = int(gjson.Get(data, "usage.output_tokens").Int())
 		if reasoning := gjson.Get(data, "usage.reasoning_output_tokens"); reasoning.Exists() {
-			usage.ReasoningOutputTokens = int(reasoning.Int())
+			tokens.reasoningOutputTokens = int(reasoning.Int())
 		}
+		setUsageTokens(usage, *tokens)
 	}
 }
