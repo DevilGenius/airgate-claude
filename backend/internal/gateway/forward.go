@@ -488,11 +488,11 @@ func normalizeRequestBody(body []byte) []byte {
 
 // handleErrorResponse 把上游 4xx/5xx 响应归类为 ForwardOutcome。
 //
-//   - ClientError（普通 4xx）：写 w 透传给客户端，Core 不 failover
+//   - ClientError（普通 4xx）：只返回 Upstream，Core 最终负责透传
 //   - AccountRateLimited / AccountDead（429/401/403/400 含账号级文本）：不写 w，保持 Writer
 //     unwritten 让 Core canFailover 不被短路；Core 会 failover + 触发状态机
 //   - UpstreamTransient（5xx）：不写 w，让 Core failover
-func handleErrorResponse(resp *http.Response, w http.ResponseWriter, start time.Time) sdk.ForwardOutcome {
+func handleErrorResponse(resp *http.Response, _ http.ResponseWriter, start time.Time) sdk.ForwardOutcome {
 	respBody, _ := io.ReadAll(resp.Body)
 	msg := extractErrorMessage(respBody)
 	if msg == "" {
@@ -501,25 +501,13 @@ func handleErrorResponse(resp *http.Response, w http.ResponseWriter, start time.
 
 	outcome := failureOutcome(resp.StatusCode, respBody, resp.Header.Clone(), msg, extractRetryAfterHeader(resp.Header))
 	outcome.Duration = time.Since(start)
-
-	// 仅 ClientError 透传给客户端；账号级 / 上游抖动保持 w unwritten 以便 failover
-	if outcome.Kind == sdk.OutcomeClientError && w != nil {
-		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-		w.WriteHeader(resp.StatusCode)
-		_, _ = w.Write(respBody)
-	}
 	return outcome
 }
 
 // rejectNonCCRequest 网关主动拒绝非 Claude Code 客户端，归为 ClientError。
 // 账号本身没问题，不应关闭调度——Core 看到 ClientError 就不会罚账号。
-func rejectNonCCRequest(w http.ResponseWriter, reason string, start time.Time) sdk.ForwardOutcome {
+func rejectNonCCRequest(_ http.ResponseWriter, reason string, start time.Time) sdk.ForwardOutcome {
 	body := ccRejectBody(reason)
-	if w != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write(body)
-	}
 	return sdk.ForwardOutcome{
 		Kind: sdk.OutcomeClientError,
 		Upstream: sdk.UpstreamResponse{

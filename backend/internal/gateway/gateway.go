@@ -613,11 +613,6 @@ func (g *AnthropicGateway) forwardCountTokens(ctx context.Context, req *sdk.Forw
 		)
 		return transientOutcome(reason), fmt.Errorf("%s", reason)
 	}
-	if req.Writer != nil {
-		req.Writer.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-		req.Writer.WriteHeader(resp.StatusCode)
-		_, _ = req.Writer.Write(respBody)
-	}
 
 	elapsed := time.Since(start)
 	if resp.StatusCode >= 400 {
@@ -635,6 +630,11 @@ func (g *AnthropicGateway) forwardCountTokens(ctx context.Context, req *sdk.Forw
 		outcome := failureOutcome(resp.StatusCode, respBody, resp.Header.Clone(), msg, extractRetryAfterHeader(resp.Header))
 		outcome.Duration = elapsed
 		return outcome, nil
+	}
+	if req.Writer != nil {
+		req.Writer.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		req.Writer.WriteHeader(resp.StatusCode)
+		_, _ = req.Writer.Write(respBody)
 	}
 	logger.Debug("upstream_request_completed",
 		sdk.LogFieldAccountID, account.ID,
