@@ -3,7 +3,7 @@ module github.com/DouDOU-start/airgate-claude/backend
 go 1.25.7
 
 require (
-	github.com/DouDOU-start/airgate-sdk v0.0.0-20260412142440-cf78d51d7cd9
+	github.com/DouDOU-start/airgate-sdk v0.0.0-20260514110732-56680479df13
 	github.com/imroc/req/v3 v3.57.0
 	github.com/refraction-networking/utls v1.8.2
 	github.com/tidwall/gjson v1.18.0
@@ -39,5 +39,3 @@ require (
 	google.golang.org/grpc v1.79.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/DouDOU-start/airgate-sdk => ../../airgate-sdk
