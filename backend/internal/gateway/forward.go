@@ -416,7 +416,7 @@ func preprocessOAuthBody(body []byte, account *sdk.Account) []byte {
 			"account_uuid": accountUUID,
 			"session_id":   sessionID,
 		})
-		body, _ = sjson.SetRawBytes(body, "metadata.user_id", userIDJSON)
+		body, _ = sjson.SetBytes(body, "metadata.user_id", string(userIDJSON))
 	}
 
 	// 3. 确保 tools 字段存在（Claude Code 总是发送 tools，即使为空）
