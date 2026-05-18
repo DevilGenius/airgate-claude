@@ -351,24 +351,24 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 			}
 
 			// 5h 窗口（Current session）
-			appendUsageWindow := func(key, label string, utilization float64, resetsAt string) {
+			appendUsageWindow := func(key, label, displayLabel, slot, group string, utilization float64, resetsAt string) {
 				if resetsAt != "" {
 					if resetAt, err := time.Parse(time.RFC3339, resetsAt); err == nil {
-						info.Windows = append(info.Windows, newAccountUsageWindow(key, label, utilization, &resetAt, now))
+						info.Windows = append(info.Windows, newAccountUsageWindow(key, label, displayLabel, slot, group, utilization, &resetAt, now))
 						return
 					}
 				}
-				info.Windows = append(info.Windows, newAccountUsageWindow(key, label, utilization, nil, now))
+				info.Windows = append(info.Windows, newAccountUsageWindow(key, label, displayLabel, slot, group, utilization, nil, now))
 			}
 
-			appendUsageWindow("5h", "5h", usageResp.FiveHour.Utilization, usageResp.FiveHour.ResetsAt)
+			appendUsageWindow("5h", "5h", "5h", "5h", "base", usageResp.FiveHour.Utilization, usageResp.FiveHour.ResetsAt)
 
 			// 7d 窗口（全部模型）
-			appendUsageWindow("7d", "7d", usageResp.SevenDay.Utilization, usageResp.SevenDay.ResetsAt)
+			appendUsageWindow("7d", "7d", "7d", "7d", "base", usageResp.SevenDay.Utilization, usageResp.SevenDay.ResetsAt)
 
 			// 7d Sonnet 窗口（仅当 API 返回了该窗口数据）
 			if usageResp.SevenDaySonnet.ResetsAt != "" || usageResp.SevenDaySonnet.Utilization > 0 {
-				appendUsageWindow("7d_sonnet", "7d Sonnet", usageResp.SevenDaySonnet.Utilization, usageResp.SevenDaySonnet.ResetsAt)
+				appendUsageWindow("model:7d:sonnet", "7d Sonnet", "7d", "7d", "model:sonnet", usageResp.SevenDaySonnet.Utilization, usageResp.SevenDaySonnet.ResetsAt)
 			}
 
 			resp.Accounts[strconv.FormatInt(a.ID, 10)] = info
