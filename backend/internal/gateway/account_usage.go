@@ -10,12 +10,15 @@ type quotaInfo struct {
 
 // accountUsageWindow 是 Claude 插件私有的账号用量窗口。
 type accountUsageWindow struct {
-	Key               string  `json:"key"`
-	Label             string  `json:"label"`
-	UsedPercent       float64 `json:"used_percent"`
-	ResetAt           string  `json:"reset_at,omitempty"`
-	ResetAfterSeconds int     `json:"reset_after_seconds,omitempty"`
-	UpdatedAt         string  `json:"updated_at,omitempty"`
+	Key          string  `json:"key"`
+	Label        string  `json:"label"`
+	DisplayLabel string  `json:"display_label,omitempty"`
+	Slot         string  `json:"slot,omitempty"`
+	Group        string  `json:"group,omitempty"`
+	UsedPercent  float64 `json:"used_percent"`
+	ResetAt      string  `json:"reset_at,omitempty"`
+	ResetSeconds int     `json:"reset_seconds,omitempty"`
+	UpdatedAt    string  `json:"updated_at,omitempty"`
 }
 
 type accountUsageInfo struct {
@@ -33,17 +36,20 @@ type accountUsageAccountsResponse struct {
 	Errors   []accountUsageError         `json:"errors,omitempty"`
 }
 
-func newAccountUsageWindow(key, label string, usedPercent float64, resetAt *time.Time, now time.Time) accountUsageWindow {
+func newAccountUsageWindow(key, label, displayLabel, slot, group string, usedPercent float64, resetAt *time.Time, now time.Time) accountUsageWindow {
 	window := accountUsageWindow{
-		Key:         key,
-		Label:       label,
-		UsedPercent: usedPercent,
-		UpdatedAt:   now.UTC().Format(time.RFC3339),
+		Key:          key,
+		Label:        label,
+		DisplayLabel: displayLabel,
+		Slot:         slot,
+		Group:        group,
+		UsedPercent:  usedPercent,
+		UpdatedAt:    now.UTC().Format(time.RFC3339),
 	}
 	if resetAt != nil {
 		window.ResetAt = resetAt.UTC().Format(time.RFC3339)
 		if resetAt.After(now) {
-			window.ResetAfterSeconds = int(resetAt.Sub(now).Seconds())
+			window.ResetSeconds = int(resetAt.Sub(now).Seconds())
 		}
 	}
 	return window

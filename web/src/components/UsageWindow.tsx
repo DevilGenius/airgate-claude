@@ -1,12 +1,14 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type { AccountSurfaceProps } from '@doudou-start/airgate-theme/plugin';
 
 interface UsageWindowItem {
   key?: string;
   label: string;
+  display_label?: string;
+  slot?: string;
+  group?: string;
   used_percent: number;
   reset_seconds?: number;
-  reset_after_seconds?: number;
   reset_at?: string;
 }
 
@@ -22,13 +24,24 @@ function getUsageWindows(context: AccountSurfaceProps['context']): UsageWindowIt
   return windows.filter(isUsageWindowItem);
 }
 
-function resolveResetSeconds(w: UsageWindowItem) {
-  if (typeof w.reset_seconds === 'number') return w.reset_seconds;
-  if (typeof w.reset_after_seconds === 'number') return w.reset_after_seconds;
+function useResetTick(enabled: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return now;
+}
+
+function resolveResetSeconds(w: UsageWindowItem, now: number) {
   if (w.reset_at) {
-    const delta = Date.parse(w.reset_at) - Date.now();
-    if (Number.isFinite(delta) && delta > 0) return Math.floor(delta / 1000);
+    const delta = Date.parse(w.reset_at) - now;
+    if (Number.isFinite(delta)) return Math.max(0, Math.floor(delta / 1000));
   }
+  if (typeof w.reset_seconds === 'number') return w.reset_seconds;
   return 0;
 }
 
@@ -49,11 +62,13 @@ function usageColor(pct: number) {
 }
 
 function windowOrder(w: UsageWindowItem) {
+  const slot = (w.slot || '').toLowerCase();
+  const group = (w.group || '').toLowerCase();
   const key = (w.key || '').toLowerCase();
   const label = w.label.toLowerCase();
-  if (key === '5h' || label.startsWith('5h')) return 0;
-  if (key === '7d' || label === '7d') return 1;
-  if (key.includes('sonnet') || label.includes('sonnet')) return 2;
+  if (slot === '5h' || key === '5h' || label.startsWith('5h')) return 0;
+  if ((slot === '7d' && group === 'base') || key === '7d' || label === '7d') return 1;
+  if (group.includes('sonnet') || key.includes('sonnet') || label.includes('sonnet')) return 2;
   return 3;
 }
 
@@ -124,6 +139,7 @@ const resetStyle: CSSProperties = {
 
 export function UsageWindow({ context }: AccountSurfaceProps) {
   const windows = [...getUsageWindows(context)].sort((a, b) => windowOrder(a) - windowOrder(b));
+  const resetNow = useResetTick(windows.length > 0);
   if (windows.length === 0) return null;
 
   return (
@@ -132,10 +148,11 @@ export function UsageWindow({ context }: AccountSurfaceProps) {
         const percent = Math.round(w.used_percent);
         const barPercent = Math.max(0, Math.min(100, percent));
         const color = usageColor(w.used_percent);
-        const resetText = formatReset(resolveResetSeconds(w));
+        const resetText = formatReset(resolveResetSeconds(w, resetNow));
+        const displayLabel = w.display_label?.trim() || w.slot?.trim() || w.label;
         return (
           <div key={w.key || `${w.label}:${index}`} style={rowStyle}>
-            <span style={badgeStyle} title={w.label}>{w.label}</span>
+            <span style={badgeStyle} title={w.label}>{displayLabel}</span>
             <div style={barStyle}>
               <div
                 style={{
