@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -402,7 +401,7 @@ func preprocessOAuthBody(body []byte, account *sdk.Account) []byte {
 	}
 
 	// 2. 注入 metadata.user_id（如果缺失）
-	//    CLI >= 2.1.78 使用 JSON 格式；使用 sticky session 30 min 内复用同一 session_id
+	//    CLI >= 2.1.78 使用 JSON 格式；使用 sticky session 3600s 内复用同一 session_id
 	if !gjson.GetBytes(body, "metadata.user_id").Exists() {
 		accountUUID := account.Credentials["account_uuid"]
 		if accountUUID == "" {
@@ -493,7 +492,7 @@ func normalizeRequestBody(body []byte) []byte {
 //     unwritten 让 Core canFailover 不被短路；Core 会 failover + 触发状态机
 //   - UpstreamTransient（5xx）：不写 w，让 Core failover
 func handleErrorResponse(resp *http.Response, _ http.ResponseWriter, start time.Time) sdk.ForwardOutcome {
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := readLimitedErrorBody(resp.Body)
 	msg := extractErrorMessage(respBody)
 	if msg == "" {
 		msg = truncate(string(respBody), 200)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,13 +17,14 @@ import (
 
 // AnthropicGateway Claude 网关插件
 type AnthropicGateway struct {
-	logger   *slog.Logger
-	ctx      sdk.PluginContext
-	tokenMgr *tokenManager
-	stdPool  *StandardTransportPool
-	fpPool   *FingerprintTransportPool
-	registry *accountRegistry
-	sidecar  *sidecarRunner
+	logger       *slog.Logger
+	ctx          sdk.PluginContext
+	tokenMgr     *tokenManager
+	stdPool      *StandardTransportPool
+	fpPool       *FingerprintTransportPool
+	oauthReqPool *OAuthReqClientPool
+	registry     *accountRegistry
+	sidecar      *sidecarRunner
 }
 
 func (g *AnthropicGateway) Info() sdk.PluginInfo {
@@ -43,6 +43,7 @@ func (g *AnthropicGateway) Init(ctx sdk.PluginContext) error {
 	// 初始化连接池
 	g.stdPool = NewStandardTransportPool()
 	g.fpPool = NewFingerprintTransportPool()
+	g.oauthReqPool = NewOAuthReqClientPool()
 
 	// 账号注册表 + sidecar 运行器
 	g.registry = newAccountRegistry()
@@ -73,6 +74,9 @@ func (g *AnthropicGateway) Stop(_ context.Context) error {
 	}
 	if g.fpPool != nil {
 		g.fpPool.Close()
+	}
+	if g.oauthReqPool != nil {
+		g.oauthReqPool.Close()
 	}
 	return nil
 }
@@ -138,8 +142,12 @@ func (g *AnthropicGateway) ValidateAccount(ctx context.Context, credentials map[
 
 		client := &http.Client{Timeout: 30 * time.Second}
 		if proxyURL := credentials["proxy_url"]; proxyURL != "" {
-			if u, err := url.Parse(proxyURL); err == nil {
-				client.Transport = &http.Transport{Proxy: http.ProxyURL(u)}
+			if g != nil && g.stdPool != nil {
+				client.Transport = g.stdPool.Get(proxyURL)
+			} else if u, err := url.Parse(proxyURL); err == nil {
+				transport := &http.Transport{Proxy: http.ProxyURL(u)}
+				client.Transport = transport
+				defer transport.CloseIdleConnections()
 			}
 		}
 		resp, err := client.Do(req)
@@ -169,7 +177,7 @@ func (g *AnthropicGateway) QueryQuota(ctx context.Context, credentials map[strin
 	}
 
 	// 调用 Anthropic usage API
-	usageResp, err := g.fetchUsage(ctx, accessToken, credentials["proxy_url"])
+	usageResp, err := g.fetchUsage(ctx, 0, accessToken, credentials["proxy_url"], credentials["tls_profile"])
 	if err != nil {
 		return nil, fmt.Errorf("查询用量失败: %w", err)
 	}
@@ -334,7 +342,7 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 				continue
 			}
 
-			usageResp, err := g.fetchUsage(ctx, accessToken, a.Credentials["proxy_url"])
+			usageResp, err := g.fetchUsage(ctx, a.ID, accessToken, a.Credentials["proxy_url"], a.Credentials["tls_profile"])
 			if err != nil {
 				resp.Errors = append(resp.Errors, accountUsageError{
 					ID:      a.ID,
@@ -492,7 +500,7 @@ type UsageResponse struct {
 }
 
 // fetchUsage 从 Anthropic API 获取 OAuth 账号用量
-func (g *AnthropicGateway) fetchUsage(ctx context.Context, accessToken, proxyURL string) (*UsageResponse, error) {
+func (g *AnthropicGateway) fetchUsage(ctx context.Context, accountID int64, accessToken, proxyURL, tlsProfile string) (*UsageResponse, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, usageAPIURL, nil)
 	if err != nil {
 		return nil, err
@@ -509,7 +517,7 @@ func (g *AnthropicGateway) fetchUsage(ctx context.Context, accessToken, proxyURL
 	// 使用 TLS 指纹客户端（api.anthropic.com 用 Claude CLI 指纹）
 	client := &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: buildFingerprintTransport(proxyURL),
+		Transport: g.usageTransport(accountID, proxyURL, tlsProfile),
 	}
 
 	resp, err := client.Do(httpReq)
@@ -519,7 +527,7 @@ func (g *AnthropicGateway) fetchUsage(ctx context.Context, accessToken, proxyURL
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := readLimitedErrorBody(resp.Body)
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 
@@ -528,6 +536,13 @@ func (g *AnthropicGateway) fetchUsage(ctx context.Context, accessToken, proxyURL
 		return nil, fmt.Errorf("解析 usage 响应失败: %w", err)
 	}
 	return &usageResp, nil
+}
+
+func (g *AnthropicGateway) usageTransport(accountID int64, proxyURL, tlsProfile string) http.RoundTripper {
+	if g != nil && g.fpPool != nil {
+		return g.fpPool.Get(accountID, proxyURL, tlsProfile)
+	}
+	return buildFingerprintTransportWithProfile(proxyURL, tlsProfile)
 }
 
 // ──────────────────────────────────────────────────────
@@ -603,7 +618,7 @@ func (g *AnthropicGateway) forwardCountTokens(ctx context.Context, req *sdk.Forw
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimitedErrorBody(resp.Body)
 	if err != nil {
 		reason := fmt.Sprintf("读取上游响应失败: %v", err)
 		logger.Warn("upstream_response_read_failed",

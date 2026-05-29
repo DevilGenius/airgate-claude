@@ -29,7 +29,12 @@ const (
 	countTokensChanBuffer     = 128
 	countTokensRequestTimeout = 20 * time.Second
 	probeRequestTimeout       = 15 * time.Second
+	probeMaxConcurrency       = 64
 	probeModel                = "claude-haiku-4-5-20251001"
+
+	accountRegistryMaxEntries      = 100000
+	accountRegistryIdleTTL         = 24 * time.Hour
+	accountRegistryCleanupInterval = 30 * time.Minute
 )
 
 // ──────────────────────────────────────────────────────
@@ -48,12 +53,16 @@ type accountSnapshot struct {
 // accountRegistry 记录被 forward 路径见到过的 oauth/session_key 账号
 // sidecar 只对 registry 里的账号发起流量，避免并发冲击所有账号
 type accountRegistry struct {
-	mu       sync.RWMutex
-	accounts map[int64]*accountSnapshot
+	mu              sync.RWMutex
+	accounts        map[int64]*accountSnapshot
+	lastCleanupTime time.Time
 }
 
 func newAccountRegistry() *accountRegistry {
-	return &accountRegistry{accounts: make(map[int64]*accountSnapshot)}
+	return &accountRegistry{
+		accounts:        make(map[int64]*accountSnapshot),
+		lastCleanupTime: time.Now(),
+	}
 }
 
 // register 登记/更新账号快照（凭证按值拷贝，避免 race）
@@ -75,19 +84,53 @@ func (r *accountRegistry) register(account *sdk.Account) {
 		snap.credentials[k] = v
 	}
 	r.mu.Lock()
+	r.cleanupLocked(snap.lastSeenAt)
+	if _, exists := r.accounts[account.ID]; !exists && len(r.accounts) >= accountRegistryMaxEntries {
+		r.deleteOldestLocked()
+	}
 	r.accounts[account.ID] = snap
 	r.mu.Unlock()
 }
 
 // snapshot 返回当前所有账号快照的切片拷贝
 func (r *accountRegistry) snapshot() []*accountSnapshot {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupLocked(now)
 	out := make([]*accountSnapshot, 0, len(r.accounts))
 	for _, a := range r.accounts {
 		out = append(out, a)
 	}
 	return out
+}
+
+func (r *accountRegistry) cleanupLocked(now time.Time) {
+	if now.Sub(r.lastCleanupTime) < accountRegistryCleanupInterval && len(r.accounts) < accountRegistryMaxEntries {
+		return
+	}
+	for accountID, snap := range r.accounts {
+		if now.Sub(snap.lastSeenAt) > accountRegistryIdleTTL {
+			delete(r.accounts, accountID)
+		}
+	}
+	r.lastCleanupTime = now
+}
+
+func (r *accountRegistry) deleteOldestLocked() {
+	var oldestID int64
+	var oldestAt time.Time
+	found := false
+	for accountID, snap := range r.accounts {
+		if !found || snap.lastSeenAt.Before(oldestAt) {
+			oldestID = accountID
+			oldestAt = snap.lastSeenAt
+			found = true
+		}
+	}
+	if found {
+		delete(r.accounts, oldestID)
+	}
 }
 
 // ──────────────────────────────────────────────────────
@@ -104,14 +147,21 @@ type countTokensJob struct {
 type sidecarRunner struct {
 	gateway *AnthropicGateway
 	jobs    chan countTokensJob
+	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
+	probes  sync.WaitGroup
+	probeCh chan struct{}
+	mu      sync.Mutex
+	stopped bool
 }
 
 func newSidecarRunner(g *AnthropicGateway) *sidecarRunner {
 	return &sidecarRunner{
 		gateway: g,
 		jobs:    make(chan countTokensJob, countTokensChanBuffer),
+		probeCh: make(chan struct{}, probeMaxConcurrency),
+		stopped: true,
 	}
 }
 
@@ -119,7 +169,17 @@ func newSidecarRunner(g *AnthropicGateway) *sidecarRunner {
 // postRefreshProbe 是事件驱动（由 tokenManager 成功刷新后触发），不占用常驻 goroutine
 func (s *sidecarRunner) start() {
 	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if !s.stopped {
+		s.mu.Unlock()
+		cancel()
+		return
+	}
+	s.jobs = make(chan countTokensJob, countTokensChanBuffer)
+	s.ctx = ctx
 	s.cancel = cancel
+	s.stopped = false
+	s.mu.Unlock()
 
 	s.wg.Add(2)
 	go s.usagePollerLoop(ctx)
@@ -128,11 +188,19 @@ func (s *sidecarRunner) start() {
 
 // stop 停止所有 sidecar
 func (s *sidecarRunner) stop() {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.stopped = true
 	if s.cancel != nil {
 		s.cancel()
 	}
 	close(s.jobs)
+	s.mu.Unlock()
 	s.wg.Wait()
+	s.probes.Wait()
 }
 
 // scheduleCountTokens 非阻塞投递 count_tokens 任务；队列满则丢弃（sidecar 流量不应反压主链路）
@@ -142,11 +210,17 @@ func (s *sidecarRunner) scheduleCountTokens(accountID int64, body []byte) {
 	}
 	bodyCopy := make([]byte, len(body))
 	copy(bodyCopy, body)
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
 	select {
 	case s.jobs <- countTokensJob{accountID: accountID, body: bodyCopy}:
 	default:
 		// 队列满，安静丢弃
 	}
+	s.mu.Unlock()
 }
 
 // ──────────────────────────────────────────────────────
@@ -197,7 +271,7 @@ func (s *sidecarRunner) pollOne(ctx context.Context, snap *accountSnapshot, logg
 	pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	_, err := s.gateway.fetchUsage(pollCtx, token, snap.credentials["proxy_url"])
+	_, err := s.gateway.fetchUsage(pollCtx, snap.id, token, snap.credentials["proxy_url"], snap.credentials["tls_profile"])
 	if err != nil {
 		logger.Warn("sidecar usage poll failed", "account_id", snap.id, "error", err)
 		return
@@ -281,8 +355,26 @@ func (s *sidecarRunner) fireRefreshProbe(account *sdk.Account) {
 		snap.credentials[k] = v
 	}
 
+	s.mu.Lock()
+	if s.stopped || s.ctx == nil {
+		s.mu.Unlock()
+		return
+	}
+	parentCtx := s.ctx
+	select {
+	case s.probeCh <- struct{}{}:
+	default:
+		s.mu.Unlock()
+		s.gateway.logger.Warn("sidecar probe skipped: concurrency limit reached", "account_id", account.ID)
+		return
+	}
+	s.probes.Add(1)
+	s.mu.Unlock()
+
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), probeRequestTimeout)
+		defer s.probes.Done()
+		defer func() { <-s.probeCh }()
+		ctx, cancel := context.WithTimeout(parentCtx, probeRequestTimeout)
 		defer cancel()
 		s.runProbe(ctx, snap)
 	}()

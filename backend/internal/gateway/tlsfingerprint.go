@@ -82,20 +82,20 @@ var defaultSignatureAlgorithms = []utls.SignatureScheme{
 // 不应通过人为加 GREASE 打乱 JA3。
 func buildBunClientHelloSpec() *utls.ClientHelloSpec {
 	extensions := []utls.TLSExtension{
-		&utls.SNIExtension{},                                                                            // 0:  server_name
-		&utls.GREASEEncryptedClientHelloExtension{},                                                     // 65037: ECH (boringssl GREASE)
-		&utls.ExtendedMasterSecretExtension{},                                                           // 23
-		&utls.RenegotiationInfoExtension{Renegotiation: utls.RenegotiateOnceAsClient},                   // 65281
-		&utls.SupportedCurvesExtension{Curves: defaultCurves},                                           // 10
-		&utls.SupportedPointsExtension{SupportedPoints: []uint8{0}},                                     // 11 (uncompressed)
-		&utls.SessionTicketExtension{},                                                                  // 35
-		&utls.ALPNExtension{AlpnProtocols: []string{"http/1.1"}},                                        // 16
-		&utls.StatusRequestExtension{},                                                                  // 5
-		&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: defaultSignatureAlgorithms},    // 13
-		&utls.SCTExtension{},                                                                            // 18
-		&utls.KeyShareExtension{KeyShares: []utls.KeyShare{{Group: utls.X25519}}},                       // 51
-		&utls.PSKKeyExchangeModesExtension{Modes: []uint8{uint8(utls.PskModeDHE)}},                      // 45
-		&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}},      // 43
+		&utls.SNIExtension{},                                                                         // 0:  server_name
+		&utls.GREASEEncryptedClientHelloExtension{},                                                  // 65037: ECH (boringssl GREASE)
+		&utls.ExtendedMasterSecretExtension{},                                                        // 23
+		&utls.RenegotiationInfoExtension{Renegotiation: utls.RenegotiateOnceAsClient},                // 65281
+		&utls.SupportedCurvesExtension{Curves: defaultCurves},                                        // 10
+		&utls.SupportedPointsExtension{SupportedPoints: []uint8{0}},                                  // 11 (uncompressed)
+		&utls.SessionTicketExtension{},                                                               // 35
+		&utls.ALPNExtension{AlpnProtocols: []string{"http/1.1"}},                                     // 16
+		&utls.StatusRequestExtension{},                                                               // 5
+		&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: defaultSignatureAlgorithms}, // 13
+		&utls.SCTExtension{},                                                                         // 18
+		&utls.KeyShareExtension{KeyShares: []utls.KeyShare{{Group: utls.X25519}}},                    // 51
+		&utls.PSKKeyExchangeModesExtension{Modes: []uint8{uint8(utls.PskModeDHE)}},                   // 45
+		&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}},   // 43
 	}
 
 	return &utls.ClientHelloSpec{
@@ -130,18 +130,13 @@ func selectClientHelloSpec(profile string) *utls.ClientHelloSpec {
 // TLS 指纹 Transport 构建
 // ──────────────────────────────────────────────────────
 
-// buildFingerprintTransport 构建带 Bun 1.3.x TLS 指纹的 Transport
+// buildFingerprintTransportWithProfile 允许账号指定 tls_profile 精确选择 ClientHelloSpec
 //
 // Bun 默认 fetch 只协商 http/1.1（ground truth），因此：
 //   - ALPN 只带 http/1.1
 //   - ForceAttemptHTTP2=false，不启 http2.ConfigureTransport
 //
 // 不强制 h2 是刻意的：Anthropic 侧有行为模型对比，配置与真实 CLI 不一致会拉高识别分数。
-func buildFingerprintTransport(proxyURL string) *http.Transport {
-	return buildFingerprintTransportWithProfile(proxyURL, "")
-}
-
-// buildFingerprintTransportWithProfile 允许账号指定 tls_profile 精确选择 ClientHelloSpec
 func buildFingerprintTransportWithProfile(proxyURL, profile string) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   httpDialTimeout,
@@ -281,7 +276,22 @@ func dialThroughProxy(ctx context.Context, proxyURL string, targetAddr string, d
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
 	}
 
+	if br.Buffered() > 0 {
+		return &bufferedProxyConn{Conn: conn, reader: br}, nil
+	}
 	return conn, nil
+}
+
+type bufferedProxyConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedProxyConn) Read(b []byte) (int, error) {
+	if c.reader != nil && c.reader.Buffered() > 0 {
+		return c.reader.Read(b)
+	}
+	return c.Conn.Read(b)
 }
 
 func hasPort(addr string) bool {

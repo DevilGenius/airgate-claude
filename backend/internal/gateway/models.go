@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 )
@@ -42,6 +43,8 @@ var modelRegistry = map[string]Spec{
 	"claude-haiku-4-5-20251001": {"Claude Haiku 4.5", 200000, 64000, 1.0, 0.1, 1.25, 2.0, 5.0},
 }
 
+var modelRegistryMu sync.RWMutex
+
 const (
 	usageCurrencyUSD = "USD"
 
@@ -76,8 +79,9 @@ func NormalizeModelID(id string) string {
 
 // AllModelSpecs 返回所有注册模型的 SDK ModelInfo 列表
 func AllModelSpecs() []sdk.ModelInfo {
-	models := make([]sdk.ModelInfo, 0, len(modelRegistry))
-	for _, item := range AllPricingSpecs() {
+	pricing := AllPricingSpecs()
+	models := make([]sdk.ModelInfo, 0, len(pricing))
+	for _, item := range pricing {
 		models = append(models, specToModelInfo(item.ID, item.Spec))
 	}
 	return models
@@ -91,6 +95,8 @@ type NamedSpec struct {
 
 // AllPricingSpecs 返回带价格的插件私有模型规格，用于 manifest 生成和计费。
 func AllPricingSpecs() []NamedSpec {
+	modelRegistryMu.RLock()
+	defer modelRegistryMu.RUnlock()
 	items := make([]NamedSpec, 0, len(modelRegistry))
 	for id, spec := range modelRegistry {
 		items = append(items, NamedSpec{ID: id, Spec: spec})
@@ -115,6 +121,9 @@ var fallbackSpec = Spec{
 
 // LookupModelSpec 查找模型计费规格，未知模型返回兜底规格。
 func LookupModelSpec(modelID string) (string, Spec) {
+	modelRegistryMu.RLock()
+	defer modelRegistryMu.RUnlock()
+
 	// 精确匹配
 	if spec, ok := modelRegistry[modelID]; ok {
 		return modelID, spec

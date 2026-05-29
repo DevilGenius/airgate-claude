@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -273,7 +272,7 @@ func (h *OAuthDevHandler) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usageResp, err := h.Gateway.fetchUsage(context.Background(), accessToken, account.Credentials["proxy_url"])
+	usageResp, err := h.Gateway.fetchUsage(r.Context(), id, accessToken, account.Credentials["proxy_url"], account.Credentials["tls_profile"])
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return

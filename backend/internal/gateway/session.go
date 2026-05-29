@@ -12,14 +12,20 @@ import (
 )
 
 // ──────────────────────────────────────────────────────
-// Session 身份：UUIDv4 + 30 min sticky 复用
+// Session 身份：UUIDv4 + 3600s sticky 复用
 // ──────────────────────────────────────────────────────
 //
 // 真实 Claude CLI 在同一会话内多次请求会复用同一 metadata.user_id；
 // 每次都重新生成会被 Anthropic 识别为非 CLI 流量。
-// 这里以 accountID + messages 前缀哈希为 key，TTL 30 min。
+// 这里以 accountID + messages 前缀哈希为 key，TTL 3600s。
 
-const sessionTTL = 30 * time.Minute
+const (
+	sessionTTL = 3600 * time.Second
+
+	// sessionCacheMaxEntries 只是异常流量下的高水位安全阀；正常回收主要靠 TTL。
+	sessionCacheMaxEntries = 1000000
+	sessionCleanupInterval = time.Minute
+)
 
 // newDeviceID 生成 64 字符十六进制 device_id（per-account 确定性）
 // 真实 CLI 使用 64-char hex device identifier
@@ -47,11 +53,15 @@ type sessionEntry struct {
 
 // sessionCache accountID+conversation 指纹 → 固定 user_id
 type sessionCache struct {
-	mu      sync.Mutex
-	entries map[string]sessionEntry
+	mu              sync.Mutex
+	entries         map[string]sessionEntry
+	lastCleanupTime time.Time
 }
 
-var defaultSessionCache = &sessionCache{entries: make(map[string]sessionEntry)}
+var defaultSessionCache = &sessionCache{
+	entries:         make(map[string]sessionEntry),
+	lastCleanupTime: time.Now(),
+}
 
 // conversationFingerprint 以 messages 数组的稳定切片计算指纹
 // 使用首条消息 + 倒数第二条消息（保持多轮对话一致，对末尾问句不敏感）
@@ -86,20 +96,43 @@ func (c *sessionCache) stickyUserID(accountID int64, fingerprint string) string 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 清理过期项（低频访问时顺带 GC）
-	if len(c.entries) > 1024 {
-		for k, e := range c.entries {
-			if now.After(e.expiresAt) {
-				delete(c.entries, k)
-			}
-		}
-	}
+	c.cleanupExpiredLocked(now)
 
 	if e, ok := c.entries[key]; ok && now.Before(e.expiresAt) {
 		return e.userID
+	} else if ok {
+		delete(c.entries, key)
 	}
 
+	if len(c.entries) >= sessionCacheMaxEntries {
+		c.deleteOneExpiredOrArbitraryLocked(now)
+	}
 	id := newUUIDv4()
 	c.entries[key] = sessionEntry{userID: id, expiresAt: now.Add(sessionTTL)}
 	return id
+}
+
+func (c *sessionCache) cleanupExpiredLocked(now time.Time) {
+	if now.Sub(c.lastCleanupTime) < sessionCleanupInterval && len(c.entries) < sessionCacheMaxEntries {
+		return
+	}
+	for k, e := range c.entries {
+		if now.After(e.expiresAt) {
+			delete(c.entries, k)
+		}
+	}
+	c.lastCleanupTime = now
+}
+
+func (c *sessionCache) deleteOneExpiredOrArbitraryLocked(now time.Time) {
+	for k, e := range c.entries {
+		if now.After(e.expiresAt) {
+			delete(c.entries, k)
+			return
+		}
+	}
+	for k := range c.entries {
+		delete(c.entries, k)
+		return
+	}
 }

@@ -21,13 +21,19 @@ const (
 	refreshCooldown     = 60 * time.Second // 已知失败的冷却窗口
 	maxRefreshRetries   = 2                // 最大重试次数
 	refreshRetryBackoff = 1 * time.Second  // 重试退避间隔
+
+	tokenStateMaxEntries      = 100000
+	tokenStateIdleTTL         = 24 * time.Hour
+	tokenStateCleanupInterval = 30 * time.Minute
 )
 
 // tokenManager 管理 OAuth token 的并发安全刷新
 type tokenManager struct {
-	gateway *AnthropicGateway
-	logger  *slog.Logger
-	locks   sync.Map // accountID (int64) -> *accountRefreshState
+	gateway         *AnthropicGateway
+	logger          *slog.Logger
+	mu              sync.Mutex
+	locks           map[int64]*accountRefreshState
+	lastCleanupTime time.Time
 }
 
 // accountRefreshState 单个账号的刷新状态
@@ -37,20 +43,63 @@ type accountRefreshState struct {
 	lastToken     string // 上次刷新后的 access_token（用于 double-check）
 	lastError     error
 	lastErrorAt   time.Time
+	lastSeenAt    time.Time
 }
 
 // newTokenManager 创建 token 管理器
 func newTokenManager(gw *AnthropicGateway, logger *slog.Logger) *tokenManager {
 	return &tokenManager{
-		gateway: gw,
-		logger:  logger,
+		gateway:         gw,
+		logger:          logger,
+		locks:           make(map[int64]*accountRefreshState),
+		lastCleanupTime: time.Now(),
 	}
 }
 
 // getState 获取或创建账号的刷新状态
 func (m *tokenManager) getState(accountID int64) *accountRefreshState {
-	val, _ := m.locks.LoadOrStore(accountID, &accountRefreshState{})
-	return val.(*accountRefreshState)
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleanupLocked(now)
+	if state, ok := m.locks[accountID]; ok {
+		state.lastSeenAt = now
+		return state
+	}
+	if len(m.locks) >= tokenStateMaxEntries {
+		m.deleteOldestLocked()
+	}
+	state := &accountRefreshState{lastSeenAt: now}
+	m.locks[accountID] = state
+	return state
+}
+
+func (m *tokenManager) cleanupLocked(now time.Time) {
+	if now.Sub(m.lastCleanupTime) < tokenStateCleanupInterval && len(m.locks) < tokenStateMaxEntries {
+		return
+	}
+	for accountID, state := range m.locks {
+		if now.Sub(state.lastSeenAt) > tokenStateIdleTTL {
+			delete(m.locks, accountID)
+		}
+	}
+	m.lastCleanupTime = now
+}
+
+func (m *tokenManager) deleteOldestLocked() {
+	var oldestID int64
+	var oldestAt time.Time
+	found := false
+	for accountID, state := range m.locks {
+		if !found || state.lastSeenAt.Before(oldestAt) {
+			oldestID = accountID
+			oldestAt = state.lastSeenAt
+			found = true
+		}
+	}
+	if found {
+		delete(m.locks, oldestID)
+	}
 }
 
 // ensureValidToken 检查 token 过期状态，必要时自动刷新
@@ -195,10 +244,17 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 	var lastErr error
 	for attempt := 0; attempt <= maxRefreshRetries; attempt++ {
 		if attempt > 0 {
+			timer := time.NewTimer(refreshRetryBackoff * time.Duration(attempt))
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				return nil, ctx.Err()
-			case <-time.After(refreshRetryBackoff * time.Duration(attempt)):
+			case <-timer.C:
 			}
 		}
 

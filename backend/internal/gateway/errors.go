@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 	"github.com/tidwall/gjson"
 )
+
+const maxErrorResponseBodyBytes = 1 << 20
 
 // classifyHTTPFailure 根据 HTTP 状态码 + 错误文本归一化为 OutcomeKind。
 //
@@ -93,6 +96,10 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func readLimitedErrorBody(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, maxErrorResponseBodyBytes+1))
 }
 
 func jsonError(msg string) []byte {
