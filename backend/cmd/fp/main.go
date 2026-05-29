@@ -34,7 +34,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	"github.com/DouDOU-start/airgate-claude/backend/internal/gateway"
+	"github.com/DevilGenius/airgate-claude/backend/internal/gateway"
 )
 
 // snapshot 即将写盘的指纹快照

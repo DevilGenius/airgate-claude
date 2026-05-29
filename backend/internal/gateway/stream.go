@@ -11,7 +11,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
+	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 )
 
 // SSE 流式响应透传 + usage 提取。调用者保证 resp.StatusCode 是 2xx（4xx/5xx 由 handleErrorResponse 处理）。

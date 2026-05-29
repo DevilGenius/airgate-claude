@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DouDOU-start/airgate-sdk/devkit/devserver"
-	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
+	"github.com/DevilGenius/airgate-sdk/devkit/devserver"
+	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 )
 
 // OAuthDevHandler devserver 的 OAuth HTTP handler

@@ -1,5 +1,5 @@
 import { AccountForm } from './components/AccountForm';
-import type { PluginFrontendModule } from '@doudou-start/airgate-theme/plugin';
+import type { PluginFrontendModule } from '@devilgenius/airgate-theme/plugin';
 import { ClaudeIcon } from './components/ClaudeIcon';
 import { AccountIdentity } from './components/AccountIdentity';
 import { UsageCostDetail } from './components/UsageCostDetail';

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/DouDOU-start/airgate-sdk/sdkgo"
+	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 )
 
 func TestExtractAnthropicUsage_MessageStartFallsBackToCachedTokens(t *testing.T) {

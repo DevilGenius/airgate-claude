@@ -11,7 +11,7 @@
 
 ---
 
-AirGate Anthropic 是 [airgate-core](https://github.com/DouDOU-start/airgate-core) 的 Claude 网关插件，基于 [airgate-sdk](https://github.com/DouDOU-start/airgate-sdk) 构建。它以 gRPC 子进程方式运行，负责将 Claude Messages API 请求转发到 Anthropic 上游，支持多种认证方式和连接池复用。
+AirGate Anthropic 是 [airgate-core](https://github.com/DevilGenius/airgate-core) 的 Claude 网关插件，基于 [airgate-sdk](https://github.com/DevilGenius/airgate-sdk) 构建。它以 gRPC 子进程方式运行，负责将 Claude Messages API 请求转发到 Anthropic 上游，支持多种认证方式和连接池复用。
 
 ## 核心特性
 
@@ -155,9 +155,9 @@ AirGate Anthropic 是 [airgate-core](https://github.com/DouDOU-start/airgate-cor
 需要 Go 1.25+、Node 22+，以及兄弟目录 `airgate-sdk` 与 `airgate-core`：
 
 ```bash
-git clone https://github.com/DouDOU-start/airgate-sdk.git
-git clone https://github.com/DouDOU-start/airgate-core.git
-git clone https://github.com/DouDOU-start/airgate-claude.git
+git clone https://github.com/DevilGenius/airgate-sdk.git
+git clone https://github.com/DevilGenius/airgate-core.git
+git clone https://github.com/DevilGenius/airgate-claude.git
 cd airgate-claude
 ```
 
@@ -221,6 +221,6 @@ airgate-claude/
 
 ## 相关项目
 
-- [airgate-core](https://github.com/DouDOU-start/airgate-core) — 核心网关（账号调度、计费、管理后台）
-- [airgate-sdk](https://github.com/DouDOU-start/airgate-sdk) — 插件 SDK
-- [airgate-openai](https://github.com/DouDOU-start/airgate-openai) — OpenAI 网关插件（参考实现）
+- [airgate-core](https://github.com/DevilGenius/airgate-core) — 核心网关（账号调度、计费、管理后台）
+- [airgate-sdk](https://github.com/DevilGenius/airgate-sdk) — 插件 SDK
+- [airgate-openai](https://github.com/DevilGenius/airgate-openai) — OpenAI 网关插件（参考实现）
