@@ -137,7 +137,7 @@ AirGate Anthropic 是 [airgate-core](https://github.com/DevilGenius/airgate-core
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Go 1.25 · gRPC · gjson · uTLS（JA3 指纹） |
+| 后端 | Go 1.26.3 · gRPC · gjson · uTLS（JA3 指纹） |
 | 前端 | React 19 · Vite · TypeScript（账号表单 Widget） |
 | 插件协议 | hashicorp/go-plugin (gRPC) |
 | 上游协议 | Anthropic Messages API · Anthropic OAuth |
@@ -156,7 +156,7 @@ AirGate Anthropic 是 [airgate-core](https://github.com/DevilGenius/airgate-core
 
 ### 方式 2：源码运行（开发）
 
-需要 Go 1.25+、Node 22+，以及兄弟目录 `airgate-sdk` 与 `airgate-core`：
+需要 Go 1.26.3+、Node 22+，以及兄弟目录 `airgate-sdk` 与 `airgate-core`：
 
 ```bash
 git clone https://github.com/DevilGenius/airgate-sdk.git
