@@ -11,6 +11,15 @@ interface UsageRecordLike {
   usage_metadata?: Record<string, string>;
 }
 
+const TOKEN_COLORS = {
+  cacheCreation: 'var(--ag-usage-token-cache-creation)',
+  cacheRead: 'var(--ag-usage-token-cache-read)',
+  input: 'var(--ag-usage-token-input)',
+  output: 'var(--ag-usage-token-output)',
+  reasoning: 'var(--ag-usage-token-reasoning)',
+  total: 'var(--ag-text)',
+} as const;
+
 const panelStyle: CSSProperties = {
   overflow: 'hidden',
   borderRadius: 'var(--radius)',
@@ -74,9 +83,9 @@ const inlineValueStyle: CSSProperties = {
 };
 
 const inlineValueMetaStyle: CSSProperties = {
+  color: TOKEN_COLORS.reasoning,
   minWidth: 0,
   overflow: 'hidden',
-  color: 'var(--ag-text-tertiary)',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 };
@@ -96,6 +105,10 @@ const valueStyle: CSSProperties = {
   textAlign: 'right',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+};
+
+const strongValueStyle: CSSProperties = {
+  fontWeight: 700,
 };
 
 function recordFromContext(context: UsageRecordSurfaceProps['context']): UsageRecordLike {
@@ -120,11 +133,11 @@ function formatNumber(value: number) {
     : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-function Row({ label, tone, value }: { label: ReactNode; tone?: string; value: ReactNode }) {
+function Row({ label, strong, tone, value }: { label: ReactNode; strong?: boolean; tone?: string; value: ReactNode }) {
   return (
     <div style={rowStyle}>
       <span style={labelStyle}>{label}</span>
-      <span style={{ ...valueStyle, color: tone }}>{value}</span>
+      <span style={{ ...valueStyle, ...(strong ? strongValueStyle : {}), color: tone }}>{value}</span>
     </div>
   );
 }
@@ -159,13 +172,13 @@ export function UsageMetricDetail({ context }: UsageRecordSurfaceProps) {
         {record.model ? <div style={subtitleStyle}>{record.model}</div> : null}
       </div>
       <div style={bodyStyle}>
-        <Row label="输入 Token" value={formatNumber(inputTokens)} tone="var(--ag-info)" />
-        <Row label="输出 Token" value={outputTokenValue(reasoningTokens, outputTokens)} tone="var(--ag-primary)" />
-        {cacheReadTokens > 0 ? <Row label="缓存读取 Token" value={formatNumber(cacheReadTokens)} tone="var(--ag-success)" /> : null}
-        {cacheCreationTokens > 0 ? <Row label="缓存写入 Token" value={formatNumber(cacheCreationTokens)} tone="var(--ag-warning)" /> : null}
-        {cacheCreation5mTokens > 0 ? <Row label="缓存写入 5m" value={formatNumber(cacheCreation5mTokens)} tone="var(--ag-warning)" /> : null}
-        {cacheCreation1hTokens > 0 ? <Row label="缓存写入 1h" value={formatNumber(cacheCreation1hTokens)} tone="var(--ag-warning)" /> : null}
-        <Row label="总 Token" value={formatNumber(totalTokens)} tone="var(--ag-text)" />
+        <Row label="输入 Token" value={formatNumber(inputTokens)} tone={TOKEN_COLORS.input} />
+        <Row label="输出 Token" value={outputTokenValue(reasoningTokens, outputTokens)} tone={TOKEN_COLORS.output} />
+        {cacheReadTokens > 0 ? <Row label="缓存读取 Token" value={formatNumber(cacheReadTokens)} tone={TOKEN_COLORS.cacheRead} /> : null}
+        {cacheCreationTokens > 0 ? <Row label="缓存创建 Token" value={formatNumber(cacheCreationTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
+        {cacheCreation5mTokens > 0 ? <Row label="缓存创建 5m" value={formatNumber(cacheCreation5mTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
+        {cacheCreation1hTokens > 0 ? <Row label="缓存创建 1h" value={formatNumber(cacheCreation1hTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
+        <Row label="总 Token" value={formatNumber(totalTokens)} tone={TOKEN_COLORS.total} strong />
       </div>
     </div>
   );

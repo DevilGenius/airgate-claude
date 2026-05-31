@@ -145,7 +145,7 @@ function fallbackDetails(record: UsageRecordLike): UsageCostDetailItem[] {
   return [
     { key: 'input_tokens', label: '输入', account_cost: record.input_cost },
     { key: 'cached_input_tokens', label: '缓存读取', account_cost: record.cached_input_cost },
-    { key: 'cache_creation_tokens', label: '缓存写入', account_cost: record.cache_creation_cost },
+    { key: 'cache_creation_tokens', label: '缓存创建', account_cost: record.cache_creation_cost },
     { key: 'output_tokens', label: '输出', account_cost: record.output_cost },
   ].filter((item) => (item.account_cost ?? 0) > 0);
 }
@@ -172,7 +172,7 @@ export function UsageCostDetail({ context }: UsageRecordSurfaceProps) {
     if (record.output_price && record.output_price > 0)
       unitPrices.push({ label: '输出单价', value: `$${record.output_price.toFixed(4)} / 1M Token` });
     if (record.cache_creation_price && record.cache_creation_price > 0)
-      unitPrices.push({ label: '缓存写入单价', value: `$${record.cache_creation_price.toFixed(4)} / 1M Token` });
+      unitPrices.push({ label: '缓存创建单价', value: `$${record.cache_creation_price.toFixed(4)} / 1M Token` });
   }
 
   const hasRateInfo = !!record.service_tier
