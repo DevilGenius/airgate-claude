@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 )
 
 // SSE 流式响应透传 + usage 提取。调用者保证 resp.StatusCode 是 2xx（4xx/5xx 由 handleErrorResponse 处理）。
+const sseIdleTimeout = 90 * time.Second
 
 // handleStreamResponse 透传 Anthropic SSE 流，同时累加 usage 字段。
 // 流中途断开时返回 OutcomeStreamAborted（字节已开写，Core 不会 failover）。
@@ -29,44 +31,95 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	var tokens tokenUsage
 	var firstTokenOnce sync.Once
 
+	baseCtx := context.Background()
+	if resp.Request != nil && resp.Request.Context() != nil {
+		baseCtx = resp.Request.Context()
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
+	defer cancel()
+
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	lines := make(chan string)
+	scanErr := make(chan error, 1)
+	go func() {
+		defer close(lines)
+		for scanner.Scan() {
+			line := scanner.Text()
+			select {
+			case lines <- line:
+			case <-ctx.Done():
+				scanErr <- ctx.Err()
+				return
+			}
+		}
+		scanErr <- scanner.Err()
+	}()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-			break
-		}
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+	idleTimer := time.NewTimer(sseIdleTimeout)
+	defer idleTimer.Stop()
 
-		data, ok := extractSSEData(line)
-		if !ok || data == "" {
-			continue
-		}
-		eventType := gjson.Get(data, "type").String()
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				elapsed := time.Since(start)
+				if err := <-scanErr; err != nil {
+					return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("读取上游 SSE 失败: %w", err)
+				}
+				fillUsageCost(usage)
+				return sdk.ForwardOutcome{
+					Kind:     sdk.OutcomeSuccess,
+					Upstream: sdk.UpstreamResponse{StatusCode: resp.StatusCode},
+					Usage:    usage,
+					Duration: elapsed,
+				}, nil
+			}
+			resetSSEIdleTimer(idleTimer)
 
-		if eventType == "content_block_delta" {
-			firstTokenOnce.Do(func() {
-				usage.FirstTokenMs = time.Since(start).Milliseconds()
-			})
+			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+				_ = resp.Body.Close()
+				return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+
+			data, ok := extractSSEData(line)
+			if !ok || data == "" {
+				continue
+			}
+			eventType := gjson.Get(data, "type").String()
+
+			if eventType == "content_block_delta" {
+				firstTokenOnce.Do(func() {
+					usage.FirstTokenMs = time.Since(start).Milliseconds()
+				})
+			}
+			extractAnthropicUsage(data, eventType, usage, &tokens)
+
+		case <-idleTimer.C:
+			err := fmt.Errorf("上游 SSE 空闲超时")
+			cancel()
+			_ = resp.Body.Close()
+			return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), err
+
+		case <-ctx.Done():
+			err := ctx.Err()
+			_ = resp.Body.Close()
+			return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), err
 		}
-		extractAnthropicUsage(data, eventType, usage, &tokens)
 	}
+}
 
-	elapsed := time.Since(start)
-	if err := scanner.Err(); err != nil {
-		return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("读取上游 SSE 失败: %w", err)
+func resetSSEIdleTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
 	}
-
-	fillUsageCost(usage)
-	return sdk.ForwardOutcome{
-		Kind:     sdk.OutcomeSuccess,
-		Upstream: sdk.UpstreamResponse{StatusCode: resp.StatusCode},
-		Usage:    usage,
-		Duration: elapsed,
-	}, nil
+	timer.Reset(sseIdleTimeout)
 }
 
 // handleNonStreamResponse 处理非流式响应。resp.StatusCode 预设 2xx。

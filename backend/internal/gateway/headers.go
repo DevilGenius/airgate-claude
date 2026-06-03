@@ -174,7 +174,12 @@ func pickRetryCount() string {
 
 // setRawHeader 绕过 Go 的 header 大小写规范化，直接设置原始 key
 func setRawHeader(h http.Header, key, value string) {
-	h.Del(key)
+	if strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+		return
+	}
+	canonicalKey := http.CanonicalHeaderKey(key)
+	h.Del(canonicalKey)
+	delete(h, canonicalKey)
 	delete(h, key)
 	h[key] = []string{value}
 }

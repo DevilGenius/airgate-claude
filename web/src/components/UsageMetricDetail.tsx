@@ -90,6 +90,11 @@ const inlineValueMetaStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+const cacheCreationDetailStyle: CSSProperties = {
+  ...inlineValueMetaStyle,
+  color: TOKEN_COLORS.cacheRead,
+};
+
 const inlineValueNumberStyle: CSSProperties = {
   flexShrink: 0,
 };
@@ -153,6 +158,23 @@ function outputTokenValue(reasoningTokens: number, outputTokens: number) {
   );
 }
 
+function cacheCreationTokenValue(totalTokens: number, cacheCreation5mTokens: number, cacheCreation1hTokens: number) {
+  const parts: Array<[string, number]> = [];
+  if (cacheCreation5mTokens > 0) parts.push(['5m', cacheCreation5mTokens]);
+  if (cacheCreation1hTokens > 0) parts.push(['1h', cacheCreation1hTokens]);
+
+  if (parts.length === 0) return formatNumber(totalTokens);
+
+  return (
+    <span style={inlineValueStyle}>
+      <span style={cacheCreationDetailStyle}>
+        ({parts.map(([label, value]) => `${label} ${formatNumber(value)}`).join(',')})
+      </span>
+      <span style={inlineValueNumberStyle}>{formatNumber(totalTokens)}</span>
+    </span>
+  );
+}
+
 export function UsageMetricDetail({ context }: UsageRecordSurfaceProps) {
   const record = recordFromContext(context);
   const metadata = metadataFromContext(context, record);
@@ -175,9 +197,13 @@ export function UsageMetricDetail({ context }: UsageRecordSurfaceProps) {
         <Row label="输入 Token" value={formatNumber(inputTokens)} tone={TOKEN_COLORS.input} />
         <Row label="输出 Token" value={outputTokenValue(reasoningTokens, outputTokens)} tone={TOKEN_COLORS.output} />
         {cacheReadTokens > 0 ? <Row label="缓存读取 Token" value={formatNumber(cacheReadTokens)} tone={TOKEN_COLORS.cacheRead} /> : null}
-        {cacheCreationTokens > 0 ? <Row label="缓存创建 Token" value={formatNumber(cacheCreationTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
-        {cacheCreation5mTokens > 0 ? <Row label="缓存创建 5m" value={formatNumber(cacheCreation5mTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
-        {cacheCreation1hTokens > 0 ? <Row label="缓存创建 1h" value={formatNumber(cacheCreation1hTokens)} tone={TOKEN_COLORS.cacheCreation} /> : null}
+        {cacheCreationTokens > 0 ? (
+          <Row
+            label="缓存创建 Token"
+            value={cacheCreationTokenValue(cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens)}
+            tone={TOKEN_COLORS.cacheCreation}
+          />
+        ) : null}
         <Row label="总 Token" value={formatNumber(totalTokens)} tone={TOKEN_COLORS.total} strong />
       </div>
     </div>

@@ -353,6 +353,10 @@ func (g *AnthropicGateway) buildOAuthClient(proxyURL string) *http.Client {
 
 // exchangeSessionKeyWithScope 通用的 Session Key → OAuth Token 流程
 func (g *AnthropicGateway) exchangeSessionKeyWithScope(ctx context.Context, sessionKey, proxyURL, scope string) (*TokenResponse, error) {
+	if strings.TrimSpace(proxyURL) != "" {
+		return nil, fmt.Errorf("session_key exchange does not support proxy_url")
+	}
+
 	// claude.ai 请求使用 Chrome 指纹客户端（绕过 Cloudflare）
 	var reqClient *req.Client
 	if g != nil && g.oauthReqPool != nil {
