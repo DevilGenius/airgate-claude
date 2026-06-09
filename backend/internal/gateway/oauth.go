@@ -237,112 +237,6 @@ func (g *AnthropicGateway) ExchangeSessionKeyForToken(ctx context.Context, sessi
 	return g.exchangeSessionKeyWithScope(ctx, sessionKey, proxyURL, OAuthScopeAPI)
 }
 
-const (
-	oauthReqClientMaxEntries      = 100000
-	oauthReqClientIdleTTL         = 2 * time.Hour
-	oauthReqClientCleanupInterval = 10 * time.Minute
-)
-
-type oauthReqClientEntry struct {
-	client     *req.Client
-	lastUsedAt time.Time
-}
-
-// OAuthReqClientPool 缓存 claude.ai 请求使用的 req.Client，按 proxyURL 隔离。
-type OAuthReqClientPool struct {
-	mu              sync.Mutex
-	clients         map[string]*oauthReqClientEntry
-	lastCleanupTime time.Time
-}
-
-func NewOAuthReqClientPool() *OAuthReqClientPool {
-	return &OAuthReqClientPool{
-		clients:         make(map[string]*oauthReqClientEntry),
-		lastCleanupTime: time.Now(),
-	}
-}
-
-func (p *OAuthReqClientPool) Get(proxyURL string) *req.Client {
-	if p == nil {
-		return buildOAuthReqClient(proxyURL)
-	}
-	now := time.Now()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if entry, ok := p.clients[proxyURL]; ok {
-		entry.lastUsedAt = now
-		p.cleanupIdleLocked(now)
-		return entry.client
-	}
-	p.cleanupIdleLocked(now)
-	if len(p.clients) >= oauthReqClientMaxEntries {
-		p.deleteOldestLocked()
-	}
-	client := buildOAuthReqClient(proxyURL)
-	p.clients[proxyURL] = &oauthReqClientEntry{client: client, lastUsedAt: now}
-	return client
-}
-
-func (p *OAuthReqClientPool) cleanupIdleLocked(now time.Time) {
-	if now.Sub(p.lastCleanupTime) < oauthReqClientCleanupInterval && len(p.clients) < oauthReqClientMaxEntries {
-		return
-	}
-	for proxyURL, entry := range p.clients {
-		if now.Sub(entry.lastUsedAt) > oauthReqClientIdleTTL {
-			closeOAuthReqClient(entry.client)
-			delete(p.clients, proxyURL)
-		}
-	}
-	p.lastCleanupTime = now
-}
-
-func (p *OAuthReqClientPool) deleteOldestLocked() {
-	var oldestKey string
-	var oldestAt time.Time
-	for proxyURL, entry := range p.clients {
-		if oldestKey == "" || entry.lastUsedAt.Before(oldestAt) {
-			oldestKey = proxyURL
-			oldestAt = entry.lastUsedAt
-		}
-	}
-	if oldestKey != "" {
-		closeOAuthReqClient(p.clients[oldestKey].client)
-		delete(p.clients, oldestKey)
-	}
-}
-
-func (p *OAuthReqClientPool) Close() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, entry := range p.clients {
-		closeOAuthReqClient(entry.client)
-	}
-	p.clients = make(map[string]*oauthReqClientEntry)
-	p.lastCleanupTime = time.Now()
-}
-
-func closeOAuthReqClient(client *req.Client) {
-	if client == nil || client.GetTransport() == nil {
-		return
-	}
-	client.GetTransport().CloseIdleConnections()
-}
-
-// buildOAuthReqClient 构建用于 claude.ai 请求的 req 客户端（Chrome TLS 指纹 + 绕过 Cloudflare）
-func buildOAuthReqClient(proxyURL string) *req.Client {
-	client := req.C().
-		SetTimeout(60 * time.Second).
-		ImpersonateChrome().
-		SetCookieJar(nil) // 禁用自动 cookie 管理，每次请求手动设置
-	if proxyURL != "" {
-		client.SetProxyURL(proxyURL)
-	}
-	return client
-}
-
 // buildOAuthClient 构建用于 token 交换的标准 HTTP 客户端（platform.claude.com 无 Cloudflare）
 func (g *AnthropicGateway) buildOAuthClient(proxyURL string) *http.Client {
 	return &http.Client{
@@ -359,10 +253,11 @@ func (g *AnthropicGateway) exchangeSessionKeyWithScope(ctx context.Context, sess
 
 	// claude.ai 请求使用 Chrome 指纹客户端（绕过 Cloudflare）
 	var reqClient *req.Client
-	if g != nil && g.oauthReqPool != nil {
-		reqClient = g.oauthReqPool.Get(proxyURL)
+	if g != nil && g.clientPool != nil {
+		reqClient = g.clientPool.get(proxyURL)
 	} else {
-		reqClient = buildOAuthReqClient(proxyURL)
+		reqClient = newReqClient(proxyURL)
+		defer closeReqClient(reqClient)
 	}
 
 	// Step 1: 获取组织 UUID

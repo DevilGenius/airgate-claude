@@ -17,14 +17,14 @@ import (
 
 // AnthropicGateway Claude 网关插件
 type AnthropicGateway struct {
-	logger       *slog.Logger
-	ctx          sdk.PluginContext
-	tokenMgr     *tokenManager
-	stdPool      *StandardTransportPool
-	fpPool       *FingerprintTransportPool
-	oauthReqPool *OAuthReqClientPool
-	registry     *accountRegistry
-	sidecar      *sidecarRunner
+	logger     *slog.Logger
+	ctx        sdk.PluginContext
+	tokenMgr   *tokenManager
+	stdPool    *StandardTransportPool
+	fpPool     *FingerprintTransportPool
+	clientPool *clientPool
+	registry   *accountRegistry
+	sidecar    *sidecarRunner
 }
 
 func (g *AnthropicGateway) Info() sdk.PluginInfo {
@@ -43,7 +43,10 @@ func (g *AnthropicGateway) Init(ctx sdk.PluginContext) error {
 	// 初始化连接池
 	g.stdPool = NewStandardTransportPool()
 	g.fpPool = NewFingerprintTransportPool()
-	g.oauthReqPool = NewOAuthReqClientPool()
+	g.clientPool = &clientPool{
+		clients:         make(map[string]*clientEntry),
+		lastCleanupTime: time.Now(),
+	}
 
 	// 账号注册表 + sidecar 运行器
 	g.registry = newAccountRegistry()
@@ -75,8 +78,8 @@ func (g *AnthropicGateway) Stop(_ context.Context) error {
 	if g.fpPool != nil {
 		g.fpPool.Close()
 	}
-	if g.oauthReqPool != nil {
-		g.oauthReqPool.Close()
+	if g.clientPool != nil {
+		g.clientPool.close()
 	}
 	return nil
 }
