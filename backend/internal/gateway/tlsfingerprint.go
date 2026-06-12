@@ -144,11 +144,14 @@ func buildFingerprintTransportWithProfile(proxyURL, profile string) *http.Transp
 	}
 
 	transport := &http.Transport{
-		MaxIdleConns:        httpMaxIdleConns,
-		MaxIdleConnsPerHost: httpIdleConnsPerHost,
-		IdleConnTimeout:     httpIdleTimeout,
-		ForceAttemptHTTP2:   false,
+		MaxIdleConns:          httpMaxIdleConns,
+		MaxIdleConnsPerHost:   httpIdleConnsPerHost,
+		MaxConnsPerHost:       httpMaxConnsPerHost,
+		IdleConnTimeout:       httpIdleTimeout,
+		ResponseHeaderTimeout: httpResponseHeaderTimeout,
+		ForceAttemptHTTP2:     false,
 	}
+	sessionCache := utls.NewLRUClientSessionCache(64)
 
 	if proxyURL != "" {
 		if parsedProxy, err := url.Parse(proxyURL); err == nil {
@@ -179,6 +182,7 @@ func buildFingerprintTransportWithProfile(proxyURL, profile string) *http.Transp
 			InsecureSkipVerify: false,
 			MinVersion:         tls.VersionTLS12,
 			NextProtos:         []string{"http/1.1"},
+			ClientSessionCache: sessionCache,
 		}, utls.HelloCustom)
 
 		if err := tlsConn.ApplyPreset(selectClientHelloSpec(profile)); err != nil {
@@ -229,7 +233,7 @@ func dialThroughProxy(ctx context.Context, proxyURL string, targetAddr string, d
 				Password: password,
 			}
 		}
-		socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
+		socksDialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxyDeadlineDialer{ctx: ctx, dialer: dialer})
 		if err != nil {
 			return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 		}
@@ -237,6 +241,7 @@ func dialThroughProxy(ctx context.Context, proxyURL string, targetAddr string, d
 		if err != nil {
 			return nil, fmt.Errorf("SOCKS5 connect: %w", err)
 		}
+		_ = conn.SetDeadline(time.Time{})
 		return conn, nil
 	}
 
@@ -244,6 +249,10 @@ func dialThroughProxy(ctx context.Context, proxyURL string, targetAddr string, d
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("connect to proxy: %w", err)
+	}
+	if err := conn.SetDeadline(proxyHandshakeDeadline(ctx)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("set proxy CONNECT deadline: %w", err)
 	}
 
 	connectReq := &http.Request{
@@ -275,11 +284,37 @@ func dialThroughProxy(ctx context.Context, proxyURL string, targetAddr string, d
 		_ = conn.Close()
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
 	}
+	_ = conn.SetDeadline(time.Time{})
 
 	if br.Buffered() > 0 {
 		return &bufferedProxyConn{Conn: conn, reader: br}, nil
 	}
 	return conn, nil
+}
+
+type proxyDeadlineDialer struct {
+	ctx    context.Context
+	dialer *net.Dialer
+}
+
+func (d proxyDeadlineDialer) Dial(network, addr string) (net.Conn, error) {
+	conn, err := d.dialer.DialContext(d.ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.SetDeadline(proxyHandshakeDeadline(d.ctx)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func proxyHandshakeDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(httpDialTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
 }
 
 type bufferedProxyConn struct {

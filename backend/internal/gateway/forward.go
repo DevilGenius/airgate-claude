@@ -17,13 +17,14 @@ import (
 )
 
 const (
-	defaultBaseURL       = "https://api.anthropic.com"
-	httpTimeout          = 3 * time.Minute // 对齐 CC 2.1.112 X-Stainless-Timeout=300
-	httpDialTimeout      = 30 * time.Second
-	httpTLSTimeout       = 15 * time.Second
-	httpIdleTimeout      = 90 * time.Second
-	httpMaxIdleConns     = 100
-	httpIdleConnsPerHost = 20
+	defaultBaseURL            = "https://api.anthropic.com"
+	httpDialTimeout           = 30 * time.Second
+	httpTLSTimeout            = 15 * time.Second
+	httpResponseHeaderTimeout = 60 * time.Second
+	httpIdleTimeout           = 90 * time.Second
+	httpMaxIdleConns          = 100
+	httpIdleConnsPerHost      = 20
+	httpMaxConnsPerHost       = 64
 )
 
 // ──────────────────────────────────────────────────────
@@ -83,7 +84,6 @@ func (g *AnthropicGateway) forwardAPIKey(ctx context.Context, req *sdk.ForwardRe
 
 	targetURL := resolveBaseURL(account.Credentials) + path + "?beta=true"
 	body := preprocessBody(req.Body)
-	body = preprocessOAuthBody(body, account)
 
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -180,13 +180,14 @@ func (g *AnthropicGateway) forwardOAuth(ctx context.Context, req *sdk.ForwardReq
 
 	updatedCreds, err := g.tokenMgr.ensureValidToken(ctx, account)
 	if err != nil {
-		// token 刷新失败的原因千差万别（refresh_token 吊销 → 账号死；网络抖动 → transient）；
-		// 这里保守按 AccountDead 处理，让核心把账号打 disabled 等待人工介入重新授权。
 		reason := fmt.Sprintf("token 刷新失败: %v", err)
 		logger.Warn("token_ensure_failed",
 			sdk.LogFieldAccountID, account.ID,
 			sdk.LogFieldError, err,
 		)
+		if !isAccountTokenRefreshError(err) {
+			return transientOutcome(reason), fmt.Errorf("%s", reason)
+		}
 		return accountDeadOutcome(reason), fmt.Errorf("%s", reason)
 	}
 	if len(updatedCreds) > 0 && g.sidecar != nil {

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -38,12 +39,40 @@ type tokenManager struct {
 
 // accountRefreshState 单个账号的刷新状态
 type accountRefreshState struct {
-	mu            sync.Mutex
-	lastRefreshAt time.Time
-	lastToken     string // 上次刷新后的 access_token（用于 double-check）
-	lastError     error
-	lastErrorAt   time.Time
-	lastSeenAt    time.Time
+	mu               sync.Mutex
+	lastRefreshAt    time.Time
+	lastToken        string // 上次刷新后的 access_token（用于 double-check）
+	lastRefreshToken string
+	lastExpiresAt    time.Time
+	lastExpiresAtRaw string
+	lastError        error
+	lastErrorAt      time.Time
+	lastSeenAt       time.Time
+}
+
+type tokenRefreshError struct {
+	err          error
+	accountFault bool
+}
+
+func (e *tokenRefreshError) Error() string {
+	return e.err.Error()
+}
+
+func (e *tokenRefreshError) Unwrap() error {
+	return e.err
+}
+
+func newTokenRefreshError(err error, accountFault bool) error {
+	if err == nil {
+		return nil
+	}
+	return &tokenRefreshError{err: err, accountFault: accountFault}
+}
+
+func isAccountTokenRefreshError(err error) bool {
+	var refreshErr *tokenRefreshError
+	return errors.As(err, &refreshErr) && refreshErr.accountFault
 }
 
 // newTokenManager 创建 token 管理器
@@ -102,6 +131,50 @@ func (m *tokenManager) deleteOldestLocked() {
 	}
 }
 
+func (s *accountRefreshState) freshCredentials(skew time.Duration) map[string]string {
+	if s.lastToken == "" || s.lastExpiresAt.IsZero() || time.Until(s.lastExpiresAt) <= skew {
+		return nil
+	}
+	updated := map[string]string{
+		"access_token": s.lastToken,
+		"expires_at":   s.lastExpiresAtRaw,
+	}
+	if s.lastRefreshToken != "" {
+		updated["refresh_token"] = s.lastRefreshToken
+	}
+	return updated
+}
+
+func (s *accountRefreshState) rememberToken(accessToken, refreshToken string, expiresAt time.Time, expiresAtRaw string) {
+	s.lastRefreshAt = time.Now()
+	s.lastToken = accessToken
+	s.lastRefreshToken = refreshToken
+	s.lastExpiresAt = expiresAt
+	s.lastExpiresAtRaw = expiresAtRaw
+	s.lastError = nil
+	s.lastErrorAt = time.Time{}
+}
+
+func applyCredentialUpdate(account *sdk.Account, updated map[string]string) bool {
+	if account == nil || len(updated) == 0 {
+		return false
+	}
+	changed := false
+	if account.Credentials == nil {
+		account.Credentials = make(map[string]string, len(updated))
+	}
+	for key, value := range updated {
+		if value == "" {
+			continue
+		}
+		if account.Credentials[key] != value {
+			account.Credentials[key] = value
+			changed = true
+		}
+	}
+	return changed
+}
+
 // ensureValidToken 检查 token 过期状态，必要时自动刷新
 // 返回更新后的凭证（用于回传 Core 持久化），如果没有刷新则为 nil
 func (m *tokenManager) ensureValidToken(ctx context.Context, account *sdk.Account) (map[string]string, error) {
@@ -151,7 +224,7 @@ func (m *tokenManager) ensureSessionKeyExchange(ctx context.Context, account *sd
 			sdk.LogFieldAccountID, account.ID,
 			sdk.LogFieldError, err,
 		)
-		return nil, err
+		return nil, newTokenRefreshError(err, true)
 	}
 
 	state := m.getState(account.ID)
@@ -159,6 +232,12 @@ func (m *tokenManager) ensureSessionKeyExchange(ctx context.Context, account *sd
 	defer state.mu.Unlock()
 
 	// Double-check: 另一个 goroutine 可能已经完成了 exchange
+	if updated := state.freshCredentials(tokenRefreshSkew); len(updated) > 0 {
+		if applyCredentialUpdate(account, updated) {
+			return updated, nil
+		}
+		return nil, nil
+	}
 	if account.Credentials["access_token"] != "" {
 		return nil, nil
 	}
@@ -173,10 +252,12 @@ func (m *tokenManager) ensureSessionKeyExchange(ctx context.Context, account *sd
 			sdk.LogFieldDurationMs, time.Since(exchangeStart).Milliseconds(),
 			sdk.LogFieldError, err,
 		)
-		return nil, fmt.Errorf("session key 换取 token 失败: %w", err)
+		wrapped := fmt.Errorf("session key 换取 token 失败: %w", err)
+		return nil, newTokenRefreshError(wrapped, isNonRetryableRefreshError(err))
 	}
 
-	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339)
+	expiresAtTime := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	expiresAt := expiresAtTime.Format(time.RFC3339)
 
 	// 更新内存中的 credentials
 	account.Credentials["access_token"] = tokenResp.AccessToken
@@ -189,8 +270,7 @@ func (m *tokenManager) ensureSessionKeyExchange(ctx context.Context, account *sd
 		"expires_at":    expiresAt,
 	}
 
-	state.lastRefreshAt = time.Now()
-	state.lastToken = tokenResp.AccessToken
+	state.rememberToken(tokenResp.AccessToken, tokenResp.RefreshToken, expiresAtTime, expiresAt)
 
 	logger.Debug("session_key_exchange_completed",
 		sdk.LogFieldAccountID, account.ID,
@@ -210,16 +290,17 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	// Double-check: 另一个 goroutine 可能已经刷新了
-	if state.lastToken != "" && state.lastToken == account.Credentials["access_token"] {
-		// token 没变，检查是否刚刚刷新过
-	} else if state.lastToken != "" && state.lastToken != account.Credentials["access_token"] {
-		// token 已被其他路径更新，重新检查过期时间
-		if expiresAt, err := time.Parse(time.RFC3339, account.Credentials["expires_at"]); err == nil {
-			if time.Until(expiresAt) > tokenRefreshSkew {
-				return nil, nil // 已被刷新且未过期
-			}
+	// Double-check: 另一个 goroutine 可能已经刷新了。这里必须复用完整
+	// access/refresh/expires_at，否则等待者会拿旧 refresh_token 再刷一次。
+	if updated := state.freshCredentials(tokenRefreshSkew); len(updated) > 0 {
+		if applyCredentialUpdate(account, updated) {
+			logger.Debug("token_refresh_reused",
+				sdk.LogFieldAccountID, account.ID,
+				"refreshed_at", state.lastRefreshAt.Format(time.RFC3339),
+			)
+			return updated, nil
 		}
+		return nil, nil
 	}
 
 	// 检查冷却窗口：最近的错误是不可重试的，不重复刷新
@@ -230,7 +311,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 				sdk.LogFieldError, state.lastError,
 				"cooldown_remaining_ms", (refreshCooldown - time.Since(state.lastErrorAt)).Milliseconds(),
 			)
-			return nil, nil // 不阻断请求，使用现有 token
+			return nil, newTokenRefreshError(state.lastError, true)
 		}
 	}
 
@@ -239,6 +320,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 
 	refreshToken := account.Credentials["refresh_token"]
 	proxyURL := account.ProxyURL
+	tlsProfile := account.Credentials["tls_profile"]
 
 	// 带重试的刷新
 	var lastErr error
@@ -258,7 +340,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 			}
 		}
 
-		tokenResp, err := m.gateway.RefreshToken(ctx, refreshToken, proxyURL)
+		tokenResp, err := m.gateway.RefreshTokenForAccount(ctx, account.ID, refreshToken, proxyURL, tlsProfile)
 		if err != nil {
 			lastErr = err
 
@@ -273,8 +355,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 					"attempt", attempt+1,
 					sdk.LogFieldReason, "non_retryable",
 				)
-				// 不阻断请求，使用现有 token（匹配 sub2api Claude 策略）
-				return nil, nil
+				return nil, newTokenRefreshError(err, true)
 			}
 
 			logger.Warn("token_refresh_retry",
@@ -287,20 +368,20 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 		}
 
 		// 刷新成功
-		newExpiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339)
+		expiresAtTime := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		newExpiresAt := expiresAtTime.Format(time.RFC3339)
 
 		// 更新内存中的 credentials
 		account.Credentials["access_token"] = tokenResp.AccessToken
 		account.Credentials["expires_at"] = newExpiresAt
+		refreshTokenForState := refreshToken
 		if tokenResp.RefreshToken != "" {
 			account.Credentials["refresh_token"] = tokenResp.RefreshToken
+			refreshTokenForState = tokenResp.RefreshToken
 		}
 
 		// 更新状态
-		state.lastRefreshAt = time.Now()
-		state.lastToken = tokenResp.AccessToken
-		state.lastError = nil
-		state.lastErrorAt = time.Time{}
+		state.rememberToken(tokenResp.AccessToken, refreshTokenForState, expiresAtTime, newExpiresAt)
 
 		// 构建回传给 Core 的更新凭证
 		updated := map[string]string{
@@ -320,7 +401,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 		return updated, nil
 	}
 
-	// 重试耗尽：记录错误，但不阻断请求
+	// 重试耗尽：token endpoint 抖动按 transient 返回，不继续用过期 token 污染账号状态。
 	state.lastError = lastErr
 	state.lastErrorAt = time.Now()
 	logger.Error("token_refresh_exhausted",
@@ -328,7 +409,7 @@ func (m *tokenManager) doRefresh(ctx context.Context, account *sdk.Account) (map
 		sdk.LogFieldDurationMs, time.Since(refreshStart).Milliseconds(),
 		sdk.LogFieldError, lastErr,
 	)
-	return nil, nil
+	return nil, newTokenRefreshError(lastErr, false)
 }
 
 // isNonRetryableRefreshError 判断刷新错误是否不可重试

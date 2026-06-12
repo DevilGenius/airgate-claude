@@ -16,7 +16,11 @@ import (
 )
 
 // SSE 流式响应透传 + usage 提取。调用者保证 resp.StatusCode 是 2xx（4xx/5xx 由 handleErrorResponse 处理）。
-const sseIdleTimeout = 90 * time.Second
+const (
+	sseIdleTimeout           = 90 * time.Second
+	upstreamSSEMaxLineBytes  = 8 * 1024 * 1024
+	maxNonStreamResponseSize = 64 << 20
+)
 
 // handleStreamResponse 透传 Anthropic SSE 流，同时累加 usage 字段。
 // 流中途断开时返回 OutcomeStreamAborted（字节已开写，Core 不会 failover）。
@@ -39,7 +43,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	defer cancel()
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), upstreamSSEMaxLineBytes)
 	lines := make(chan string)
 	scanErr := make(chan error, 1)
 	go func() {
@@ -58,6 +62,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 
 	idleTimer := time.NewTimer(sseIdleTimeout)
 	defer idleTimer.Stop()
+	eventLines := make([]string, 0, 4)
 
 	for {
 		select {
@@ -66,6 +71,13 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 				elapsed := time.Since(start)
 				if err := <-scanErr; err != nil {
 					return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("读取上游 SSE 失败: %w", err)
+				}
+				if len(eventLines) > 0 {
+					if err := writeSSEEvent(w, eventLines); err != nil {
+						_ = resp.Body.Close()
+						return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
+					}
+					observeSSEEvent(eventLines, start, usage, &tokens, &firstTokenOnce)
 				}
 				fillUsageCost(usage)
 				return sdk.ForwardOutcome{
@@ -76,27 +88,17 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 				}, nil
 			}
 			resetSSEIdleTimer(idleTimer)
+			eventLines = append(eventLines, line)
+			if line != "" {
+				continue
+			}
 
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+			if err := writeSSEEvent(w, eventLines); err != nil {
 				_ = resp.Body.Close()
 				return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
 			}
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-
-			data, ok := extractSSEData(line)
-			if !ok || data == "" {
-				continue
-			}
-			eventType := gjson.Get(data, "type").String()
-
-			if eventType == "content_block_delta" {
-				firstTokenOnce.Do(func() {
-					usage.FirstTokenMs = time.Since(start).Milliseconds()
-				})
-			}
-			extractAnthropicUsage(data, eventType, usage, &tokens)
+			observeSSEEvent(eventLines, start, usage, &tokens, &firstTokenOnce)
+			eventLines = eventLines[:0]
 
 		case <-idleTimer.C:
 			err := fmt.Errorf("上游 SSE 空闲超时")
@@ -112,6 +114,34 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	}
 }
 
+func writeSSEEvent(w http.ResponseWriter, lines []string) error {
+	for _, line := range lines {
+		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+			return err
+		}
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
+}
+
+func observeSSEEvent(lines []string, start time.Time, usage *sdk.Usage, tokens *tokenUsage, firstTokenOnce *sync.Once) {
+	for _, line := range lines {
+		data, ok := extractSSEData(line)
+		if !ok || data == "" {
+			continue
+		}
+		eventType := gjson.Get(data, "type").String()
+		if eventType == "content_block_delta" {
+			firstTokenOnce.Do(func() {
+				usage.FirstTokenMs = time.Since(start).Milliseconds()
+			})
+		}
+		extractAnthropicUsage(data, eventType, usage, tokens)
+	}
+}
+
 func resetSSEIdleTimer(timer *time.Timer) {
 	if !timer.Stop() {
 		select {
@@ -124,9 +154,13 @@ func resetSSEIdleTimer(timer *time.Timer) {
 
 // handleNonStreamResponse 处理非流式响应。resp.StatusCode 预设 2xx。
 func handleNonStreamResponse(resp *http.Response, w http.ResponseWriter, start time.Time) (sdk.ForwardOutcome, error) {
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNonStreamResponseSize+1))
 	if err != nil {
 		reason := fmt.Sprintf("读取上游响应失败: %v", err)
+		return transientOutcome(reason), fmt.Errorf("%s", reason)
+	}
+	if len(body) > maxNonStreamResponseSize {
+		reason := "上游非流式响应过大"
 		return transientOutcome(reason), fmt.Errorf("%s", reason)
 	}
 

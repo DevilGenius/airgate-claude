@@ -74,13 +74,15 @@ func (p *StandardTransportPool) Get(proxyURL string) *http.Transport {
 		p.deleteOldestLocked()
 	}
 	t := &http.Transport{
-		DialContext:         p.dialer.DialContext,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout: httpTLSTimeout,
-		MaxIdleConns:        httpMaxIdleConns,
-		MaxIdleConnsPerHost: httpIdleConnsPerHost,
-		IdleConnTimeout:     httpIdleTimeout,
-		ForceAttemptHTTP2:   true,
+		DialContext:           p.dialer.DialContext,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout:   httpTLSTimeout,
+		ResponseHeaderTimeout: httpResponseHeaderTimeout,
+		MaxIdleConns:          httpMaxIdleConns,
+		MaxIdleConnsPerHost:   httpIdleConnsPerHost,
+		MaxConnsPerHost:       httpMaxConnsPerHost,
+		IdleConnTimeout:       httpIdleTimeout,
+		ForceAttemptHTTP2:     true,
 	}
 
 	if proxyURL != "" {
@@ -288,18 +290,19 @@ func getHTTPClient(stdPool *StandardTransportPool, fpPool *FingerprintTransportP
 					Timeout:   httpDialTimeout,
 					KeepAlive: 30 * time.Second,
 				}).DialContext,
-				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-				TLSHandshakeTimeout: httpTLSTimeout,
-				MaxIdleConns:        httpMaxIdleConns,
-				MaxIdleConnsPerHost: httpIdleConnsPerHost,
-				IdleConnTimeout:     httpIdleTimeout,
-				ForceAttemptHTTP2:   true,
+				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+				TLSHandshakeTimeout:   httpTLSTimeout,
+				ResponseHeaderTimeout: httpResponseHeaderTimeout,
+				MaxIdleConns:          httpMaxIdleConns,
+				MaxIdleConnsPerHost:   httpIdleConnsPerHost,
+				MaxConnsPerHost:       httpMaxConnsPerHost,
+				IdleConnTimeout:       httpIdleTimeout,
+				ForceAttemptHTTP2:     true,
 			}
 		}
 	}
 
 	return &http.Client{
-		Timeout:   httpTimeout,
 		Transport: transport,
 	}
 }

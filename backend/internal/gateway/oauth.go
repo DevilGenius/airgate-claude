@@ -163,7 +163,7 @@ func (g *AnthropicGateway) HandleOAuthCallback(ctx context.Context, code, state,
 		return nil, fmt.Errorf("OAuth 会话已过期")
 	}
 
-	client := g.buildOAuthClient(proxyURL)
+	client := g.buildOAuthClient(0, proxyURL, "")
 
 	// 直接用 code + 保存的 code_verifier 换 token
 	tokenResp, err := g.exchangeCodeForToken(ctx, client, code, session.CodeVerifier, state)
@@ -237,11 +237,11 @@ func (g *AnthropicGateway) ExchangeSessionKeyForToken(ctx context.Context, sessi
 	return g.exchangeSessionKeyWithScope(ctx, sessionKey, proxyURL, OAuthScopeAPI)
 }
 
-// buildOAuthClient 构建用于 token 交换的标准 HTTP 客户端（platform.claude.com 无 Cloudflare）
-func (g *AnthropicGateway) buildOAuthClient(proxyURL string) *http.Client {
+// buildOAuthClient 构建用于 token 交换的 HTTP 客户端。
+func (g *AnthropicGateway) buildOAuthClient(accountID int64, proxyURL, tlsProfile string) *http.Client {
 	return &http.Client{
 		Timeout:   60 * time.Second,
-		Transport: g.usageTransport(0, proxyURL, ""),
+		Transport: g.usageTransport(accountID, proxyURL, tlsProfile),
 	}
 }
 
@@ -285,7 +285,7 @@ func (g *AnthropicGateway) exchangeSessionKeyWithScope(ctx context.Context, sess
 	}
 
 	// Step 3: 用 code 换 token（platform.claude.com 无 Cloudflare，用标准 HTTP 客户端）
-	httpClient := g.buildOAuthClient(proxyURL)
+	httpClient := g.buildOAuthClient(0, proxyURL, "")
 	tokenResp, err := g.exchangeCodeForToken(ctx, httpClient, authCode, codeVerifier, state)
 	if err != nil {
 		return nil, fmt.Errorf("换取 token 失败: %w", err)
@@ -446,7 +446,15 @@ func (g *AnthropicGateway) exchangeCodeForToken(ctx context.Context, client *htt
 
 // RefreshToken 刷新 OAuth token
 func (g *AnthropicGateway) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (*TokenResponse, error) {
-	client := g.buildOAuthClient(proxyURL)
+	return g.refreshToken(ctx, 0, refreshToken, proxyURL, "")
+}
+
+func (g *AnthropicGateway) RefreshTokenForAccount(ctx context.Context, accountID int64, refreshToken, proxyURL, tlsProfile string) (*TokenResponse, error) {
+	return g.refreshToken(ctx, accountID, refreshToken, proxyURL, tlsProfile)
+}
+
+func (g *AnthropicGateway) refreshToken(ctx context.Context, accountID int64, refreshToken, proxyURL, tlsProfile string) (*TokenResponse, error) {
+	client := g.buildOAuthClient(accountID, proxyURL, tlsProfile)
 
 	reqBody := map[string]any{
 		"grant_type":    "refresh_token",
