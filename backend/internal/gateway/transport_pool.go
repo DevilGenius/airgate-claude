@@ -271,8 +271,9 @@ func (p *FingerprintTransportPool) Close() {
 	p.lastCleanupTime = time.Now()
 }
 
-// getHTTPClient 根据账号类型从连接池获取 HTTP Client
-func getHTTPClient(stdPool *StandardTransportPool, fpPool *FingerprintTransportPool, accountID int64, accountType, proxyURL, tlsProfile string) *http.Client {
+// getHTTPClient 根据账号类型从连接池获取 HTTP Client。
+// 非流式请求保留总超时，防止上游 headers 后长期卡住 body 读取；流式请求由 SSE idle timeout 控制。
+func getHTTPClient(stdPool *StandardTransportPool, fpPool *FingerprintTransportPool, accountID int64, accountType, proxyURL, tlsProfile string, stream bool) *http.Client {
 	var transport http.RoundTripper
 	switch accountType {
 	case "oauth", "session_key":
@@ -302,9 +303,13 @@ func getHTTPClient(stdPool *StandardTransportPool, fpPool *FingerprintTransportP
 		}
 	}
 
-	return &http.Client{
+	client := &http.Client{
 		Transport: transport,
 	}
+	if !stream {
+		client.Timeout = httpTimeout
+	}
+	return client
 }
 
 // poolStats 返回连接池统计（用于调试日志）

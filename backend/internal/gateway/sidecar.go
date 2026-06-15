@@ -411,7 +411,7 @@ func (s *sidecarRunner) runProbe(ctx context.Context, snap *accountSnapshot) {
 
 	setAnthropicAuthHeaders(req, fakeAccount, http.Header{}, probeModel)
 
-	client := getHTTPClient(s.gateway.stdPool, s.gateway.fpPool, snap.id, snap.accountType, snap.proxyURL, snap.credentials["tls_profile"])
+	client := getHTTPClient(s.gateway.stdPool, s.gateway.fpPool, snap.id, snap.accountType, snap.proxyURL, snap.credentials["tls_profile"], false)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("sidecar probe request failed", "account_id", snap.id, "error", err)

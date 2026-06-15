@@ -18,6 +18,7 @@ import (
 
 const (
 	defaultBaseURL            = "https://api.anthropic.com"
+	httpTimeout               = 3 * time.Minute // 对齐 CC 2.1.112 X-Stainless-Timeout=300；仅用于非流式请求。
 	httpDialTimeout           = 30 * time.Second
 	httpTLSTimeout            = 15 * time.Second
 	httpResponseHeaderTimeout = 60 * time.Second
@@ -110,7 +111,7 @@ func (g *AnthropicGateway) forwardAPIKey(ctx context.Context, req *sdk.ForwardRe
 		"account_type", "apikey",
 	)
 
-	client := g.getHTTPClient(account)
+	client := g.getHTTPClient(account, req.Stream && req.Writer != nil)
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		dur := time.Since(start)
@@ -232,7 +233,7 @@ func (g *AnthropicGateway) forwardOAuth(ctx context.Context, req *sdk.ForwardReq
 		"account_type", account.Type,
 	)
 
-	client := g.getHTTPClient(account)
+	client := g.getHTTPClient(account, req.Stream && req.Writer != nil)
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		dur := time.Since(start)
@@ -521,6 +522,6 @@ func rejectNonCCRequest(_ http.ResponseWriter, reason string, start time.Time) s
 }
 
 // getHTTPClient 从连接池获取 HTTP 客户端（按账号 ID + tls_profile 分桶）
-func (g *AnthropicGateway) getHTTPClient(account *sdk.Account) *http.Client {
-	return getHTTPClient(g.stdPool, g.fpPool, account.ID, account.Type, account.ProxyURL, account.Credentials["tls_profile"])
+func (g *AnthropicGateway) getHTTPClient(account *sdk.Account, stream bool) *http.Client {
+	return getHTTPClient(g.stdPool, g.fpPool, account.ID, account.Type, account.ProxyURL, account.Credentials["tls_profile"], stream)
 }
