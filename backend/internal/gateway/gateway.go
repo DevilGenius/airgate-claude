@@ -486,6 +486,8 @@ func (g *AnthropicGateway) HandleRequest(ctx context.Context, _, path, _ string,
 
 const usageAPIURL = "https://api.anthropic.com/api/oauth/usage"
 
+var usageAPIEndpoint = usageAPIURL
+
 // UsageResponse Anthropic API 返回的 usage 结构
 type UsageResponse struct {
 	FiveHour struct {
@@ -504,7 +506,7 @@ type UsageResponse struct {
 
 // fetchUsage 从 Anthropic API 获取 OAuth 账号用量
 func (g *AnthropicGateway) fetchUsage(ctx context.Context, accountID int64, accessToken, proxyURL, tlsProfile string) (*UsageResponse, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, usageAPIURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, usageAPIEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}

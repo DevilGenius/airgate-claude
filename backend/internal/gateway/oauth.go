@@ -42,6 +42,12 @@ const (
 	oauthSessionMaxEntries = 1000000
 )
 
+var (
+	oauthAuthorizeEndpoint = OAuthAuthorizeURL
+	oauthTokenEndpoint     = OAuthTokenURL
+	claudeAIBaseEndpoint   = claudeAIBaseURL
+)
+
 // ──────────────────────────────────────────────────────
 // OAuth Session 管理
 // ──────────────────────────────────────────────────────
@@ -141,7 +147,7 @@ func (g *AnthropicGateway) StartOAuth() (*OAuthStartResponse, error) {
 	q.Set("code_challenge", codeChallenge)
 	q.Set("code_challenge_method", "S256")
 	q.Set("state", state)
-	authorizeURL := OAuthAuthorizeURL + "?" + q.Encode()
+	authorizeURL := oauthAuthorizeEndpoint + "?" + q.Encode()
 
 	g.logger.Info("OAuth 授权发起", "authorize_url", authorizeURL)
 
@@ -309,7 +315,7 @@ func (g *AnthropicGateway) getOrganizationUUID(ctx context.Context, client *req.
 		SetHeader("Accept-Language", "en-US,en;q=0.9").
 		SetHeader("Cache-Control", "no-cache").
 		SetSuccessResult(&orgs).
-		Get(claudeAIBaseURL + "/api/organizations")
+		Get(claudeAIBaseEndpoint + "/api/organizations")
 	if err != nil {
 		return "", err
 	}
@@ -333,7 +339,7 @@ func (g *AnthropicGateway) getOrganizationUUID(ctx context.Context, client *req.
 
 // getAuthorizationCodeWithScope 获取 OAuth 授权码（使用 req/v3 Chrome 指纹）
 func (g *AnthropicGateway) getAuthorizationCodeWithScope(ctx context.Context, client *req.Client, sessionKey, orgUUID, codeChallenge, state, scope string) (string, error) {
-	authURL := fmt.Sprintf("%s/v1/oauth/%s/authorize", claudeAIBaseURL, orgUUID)
+	authURL := fmt.Sprintf("%s/v1/oauth/%s/authorize", claudeAIBaseEndpoint, orgUUID)
 
 	reqBody := map[string]any{
 		"response_type":         "code",
@@ -418,7 +424,7 @@ func (g *AnthropicGateway) exchangeCodeForToken(ctx context.Context, client *htt
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, OAuthTokenURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthTokenEndpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +473,7 @@ func (g *AnthropicGateway) refreshToken(ctx context.Context, accountID int64, re
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, OAuthTokenURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthTokenEndpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
