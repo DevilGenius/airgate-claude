@@ -200,10 +200,10 @@ func TestBuildCountTokensHeaders(t *testing.T) {
 
 		buildCountTokensHeaders(req, account)
 
-		if got := req.Header["authorization"]; len(got) != 1 || got[0] != "Bearer tok" {
+		if got := req.Header[testRawHeaderKey("authorization")]; len(got) != 1 || got[0] != "Bearer tok" {
 			t.Fatalf("authorization = %#v", got)
 		}
-		if got := req.Header["anthropic-beta"][0]; got != CountTokensBetaHeader {
+		if got := req.Header[testRawHeaderKey("anthropic-beta")][0]; got != CountTokensBetaHeader {
 			t.Fatalf("beta = %q", got)
 		}
 		if got := req.Header["Accept"][0]; got != "application/json" {

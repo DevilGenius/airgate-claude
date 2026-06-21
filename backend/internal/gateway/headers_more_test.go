@@ -9,6 +9,10 @@ import (
 	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 )
 
+func testRawHeaderKey(key string) string {
+	return key
+}
+
 func TestSetRawHeaderPreservesCaseAndRejectsControls(t *testing.T) {
 	h := http.Header{"Authorization": []string{"old"}}
 	setRawHeader(h, "authorization", "Bearer token")
@@ -16,16 +20,16 @@ func TestSetRawHeaderPreservesCaseAndRejectsControls(t *testing.T) {
 	if _, ok := h["Authorization"]; ok {
 		t.Fatalf("canonical Authorization key was not removed: %#v", h)
 	}
-	if got := h["authorization"]; len(got) != 1 || got[0] != "Bearer token" {
+	if got := h[testRawHeaderKey("authorization")]; len(got) != 1 || got[0] != "Bearer token" {
 		t.Fatalf("raw authorization header = %#v", got)
 	}
 
 	setRawHeader(h, "x-bad\nkey", "value")
-	if _, ok := h["x-bad\nkey"]; ok {
+	if _, ok := h[testRawHeaderKey("x-bad\nkey")]; ok {
 		t.Fatalf("header with newline key should be rejected")
 	}
 	setRawHeader(h, "x-bad-value", "bad\r\nvalue")
-	if _, ok := h["x-bad-value"]; ok {
+	if _, ok := h[testRawHeaderKey("x-bad-value")]; ok {
 		t.Fatalf("header with newline value should be rejected")
 	}
 }
@@ -78,17 +82,17 @@ func TestSetAnthropicAuthHeadersAPIKey(t *testing.T) {
 
 	setAnthropicAuthHeaders(req, account, clientHeaders, "claude-opus-4-8")
 
-	if got := req.Header["x-api-key"]; len(got) != 1 || got[0] != "sk-ant-test" {
+	if got := req.Header[testRawHeaderKey("x-api-key")]; len(got) != 1 || got[0] != "sk-ant-test" {
 		t.Fatalf("x-api-key = %#v", got)
 	}
-	beta := req.Header["anthropic-beta"][0]
+	beta := req.Header[testRawHeaderKey("anthropic-beta")][0]
 	if strings.Contains(beta, BetaFastMode) || beta != BetaOAuth+",custom-beta" {
 		t.Fatalf("anthropic-beta = %q", beta)
 	}
-	if got := req.Header["anthropic-version"][0]; got != "2024-01-01" {
+	if got := req.Header[testRawHeaderKey("anthropic-version")][0]; got != "2024-01-01" {
 		t.Fatalf("anthropic-version = %q", got)
 	}
-	if got := req.Header["content-type"][0]; got != "application/json" {
+	if got := req.Header[testRawHeaderKey("content-type")][0]; got != "application/json" {
 		t.Fatalf("content-type = %q", got)
 	}
 	if retry := req.Header.Get("X-Stainless-Retry-Count"); !slices.Contains([]string{"0", "1", "2"}, retry) {
@@ -106,7 +110,7 @@ func TestSetAnthropicAuthHeadersDefaultsAndOAuth(t *testing.T) {
 
 		setAnthropicAuthHeaders(req, account, http.Header{}, "claude-haiku-4-5")
 
-		if got := req.Header["anthropic-beta"][0]; got != APIKeyHaikuBetaHeader {
+		if got := req.Header[testRawHeaderKey("anthropic-beta")][0]; got != APIKeyHaikuBetaHeader {
 			t.Fatalf("haiku api-key beta = %q", got)
 		}
 	})
@@ -118,10 +122,10 @@ func TestSetAnthropicAuthHeadersDefaultsAndOAuth(t *testing.T) {
 
 		setAnthropicAuthHeaders(req, account, clientHeaders, "claude-opus-4-8")
 
-		if got := req.Header["authorization"]; len(got) != 1 || got[0] != "Bearer tok" {
+		if got := req.Header[testRawHeaderKey("authorization")]; len(got) != 1 || got[0] != "Bearer tok" {
 			t.Fatalf("authorization = %#v", got)
 		}
-		beta := req.Header["anthropic-beta"][0]
+		beta := req.Header[testRawHeaderKey("anthropic-beta")][0]
 		if !strings.Contains(beta, OAuthBetaHeader) || !strings.Contains(beta, "custom-beta") || strings.Contains(beta, BetaFastMode) {
 			t.Fatalf("oauth beta = %q", beta)
 		}
@@ -133,7 +137,7 @@ func TestSetAnthropicAuthHeadersDefaultsAndOAuth(t *testing.T) {
 
 		setAnthropicAuthHeaders(req, account, http.Header{}, "claude-haiku-4-5")
 
-		if got := req.Header["anthropic-beta"][0]; got != HaikuBetaHeader {
+		if got := req.Header[testRawHeaderKey("anthropic-beta")][0]; got != HaikuBetaHeader {
 			t.Fatalf("haiku oauth beta = %q", got)
 		}
 	})
