@@ -35,8 +35,9 @@ const labelStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   border: `1px solid ${cssVar('glassBorder')}`,
   borderRadius: cssVar('radiusLg'),
-  padding: '1rem',
+  padding: '0.5rem 0.75rem',
   cursor: 'pointer',
+  lineHeight: 1.2,
   transition: 'border-color 0.2s, background-color 0.2s',
 };
 
@@ -50,6 +51,20 @@ const descStyle: React.CSSProperties = {
   fontSize: '0.75rem',
   color: cssVar('textTertiary'),
   marginTop: '0.25rem',
+};
+
+const accountTypeTitleStyle: React.CSSProperties = {
+  fontSize: '0.8125rem',
+  fontWeight: 500,
+  color: cssVar('text'),
+  lineHeight: 1.2,
+};
+
+const accountTypeDescStyle: React.CSSProperties = {
+  fontSize: '0.6875rem',
+  color: cssVar('textTertiary'),
+  lineHeight: 1.2,
+  marginTop: '0.125rem',
 };
 
 const pillStyle: React.CSSProperties = {
@@ -497,15 +512,15 @@ export function AccountForm({
             style={category === 'claude_code' ? cardActiveStyle : cardStyle}
             onClick={() => handleCategoryChange('claude_code')}
           >
-            <div style={{ fontSize: '0.875rem', fontWeight: 500, color: cssVar('text') }}>Claude Code</div>
-            <div style={descStyle}>OAuth / Session Key</div>
+            <div style={accountTypeTitleStyle}>Claude Code</div>
+            <div style={accountTypeDescStyle}>OAuth / Session Key</div>
           </div>
           <div
             style={category === 'claude_console' ? cardActiveStyle : cardStyle}
             onClick={() => handleCategoryChange('claude_console')}
           >
-            <div style={{ fontSize: '0.875rem', fontWeight: 500, color: cssVar('text') }}>Claude Console</div>
-            <div style={descStyle}>API Key</div>
+            <div style={accountTypeTitleStyle}>Claude Console</div>
+            <div style={accountTypeDescStyle}>API Key</div>
           </div>
         </div>
       </div>
