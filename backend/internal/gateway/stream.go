@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -33,7 +32,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 
 	usage := &sdk.Usage{Currency: usageCurrencyUSD}
 	var tokens tokenUsage
-	var firstTokenOnce sync.Once
+	var timing anthropicSSETiming
 
 	baseCtx := context.Background()
 	if resp.Request != nil && resp.Request.Context() != nil {
@@ -77,7 +76,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 						_ = resp.Body.Close()
 						return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
 					}
-					observeSSEEvent(eventLines, start, usage, &tokens, &firstTokenOnce)
+					observeSSEEvent(eventLines, start, usage, &tokens, &timing)
 				}
 				fillUsageCost(usage)
 				return sdk.ForwardOutcome{
@@ -97,7 +96,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 				_ = resp.Body.Close()
 				return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
 			}
-			observeSSEEvent(eventLines, start, usage, &tokens, &firstTokenOnce)
+			observeSSEEvent(eventLines, start, usage, &tokens, &timing)
 			eventLines = eventLines[:0]
 
 		case <-idleTimer.C:
@@ -126,20 +125,47 @@ func writeSSEEvent(w http.ResponseWriter, lines []string) error {
 	return nil
 }
 
-func observeSSEEvent(lines []string, start time.Time, usage *sdk.Usage, tokens *tokenUsage, firstTokenOnce *sync.Once) {
+type anthropicSSETiming struct {
+	firstEventRecorded bool
+	firstTokenRecorded bool
+}
+
+func observeSSEEvent(lines []string, start time.Time, usage *sdk.Usage, tokens *tokenUsage, timing *anthropicSSETiming) {
 	for _, line := range lines {
 		data, ok := extractSSEData(line)
 		if !ok || data == "" {
 			continue
 		}
 		eventType := gjson.Get(data, "type").String()
-		if eventType == "content_block_delta" {
-			firstTokenOnce.Do(func() {
-				usage.FirstTokenMs = time.Since(start).Milliseconds()
-			})
+		if timing != nil && !timing.firstEventRecorded {
+			usage.FirstEventMs = time.Since(start).Milliseconds()
+			timing.firstEventRecorded = true
+		}
+		if timing != nil && isAnthropicOutputEvent(data, eventType) && !timing.firstTokenRecorded {
+			usage.FirstTokenMs = time.Since(start).Milliseconds()
+			timing.firstTokenRecorded = true
 		}
 		extractAnthropicUsage(data, eventType, usage, tokens)
 	}
+}
+
+func isAnthropicOutputEvent(data, eventType string) bool {
+	switch eventType {
+	case "content_block_start":
+		return gjson.Get(data, "content_block.type").String() == "tool_use"
+	case "content_block_delta":
+		switch gjson.Get(data, "delta.type").String() {
+		case "text_delta":
+			return gjson.Get(data, "delta.text").String() != ""
+		case "thinking_delta":
+			return gjson.Get(data, "delta.thinking").String() != ""
+		case "input_json_delta":
+			return gjson.Get(data, "delta.partial_json").Exists()
+		case "citations_delta", "redacted_thinking_delta":
+			return true
+		}
+	}
+	return false
 }
 
 func resetSSEIdleTimer(timer *time.Timer) {
@@ -166,7 +192,9 @@ func handleNonStreamResponse(resp *http.Response, w http.ResponseWriter, start t
 
 	var tokens tokenUsage
 	applyAnthropicUsageNode(gjson.GetBytes(body, "usage"), &tokens, true)
-	usage := newTokenUsage(gjson.GetBytes(body, "model").String(), tokens, time.Since(start).Milliseconds())
+	elapsed := time.Since(start)
+	usage := newTokenUsage(gjson.GetBytes(body, "model").String(), tokens, elapsed.Milliseconds())
+	usage.FirstTokenMs = elapsed.Milliseconds()
 	fillUsageCost(usage)
 
 	headers := resp.Header.Clone()
@@ -180,7 +208,7 @@ func handleNonStreamResponse(resp *http.Response, w http.ResponseWriter, start t
 		Kind:     sdk.OutcomeSuccess,
 		Upstream: sdk.UpstreamResponse{StatusCode: resp.StatusCode, Headers: headers},
 		Usage:    usage,
-		Duration: time.Since(start),
+		Duration: elapsed,
 	}
 	if w == nil {
 		outcome.Upstream.Body = body

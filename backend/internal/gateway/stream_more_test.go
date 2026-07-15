@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,9 +30,9 @@ func TestSSEHelpers(t *testing.T) {
 
 	usage := &sdk.Usage{Currency: usageCurrencyUSD}
 	var tokens tokenUsage
-	var once sync.Once
-	observeSSEEvent([]string{`data: {"type":"content_block_delta"}`, `data: {"type":"message_delta","usage":{"output_tokens":3}}`}, time.Now().Add(-10*time.Millisecond), usage, &tokens, &once)
-	if usage.FirstTokenMs <= 0 || usage.OutputTokens != 3 {
+	var timing anthropicSSETiming
+	observeSSEEvent([]string{`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`, `data: {"type":"message_delta","usage":{"output_tokens":3}}`}, time.Now().Add(-10*time.Millisecond), usage, &tokens, &timing)
+	if usage.FirstEventMs <= 0 || usage.FirstTokenMs <= 0 || usage.OutputTokens != 3 {
 		t.Fatalf("observe usage = %#v", usage)
 	}
 }
@@ -44,7 +43,7 @@ func TestHandleStreamResponseSuccess(t *testing.T) {
 		`data: {"type":"message_start","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10}}}`,
 		``,
 		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"text":"hi"}}`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`,
 		``,
 		`event: message_delta`,
 		`data: {"type":"message_delta","usage":{"output_tokens":5}}`,

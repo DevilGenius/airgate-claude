@@ -185,11 +185,11 @@ type tokenUsage struct {
 	reasoningOutputTokens int
 }
 
-func newTokenUsage(modelID string, tokens tokenUsage, firstTokenMs int64) *sdk.Usage {
+func newTokenUsage(modelID string, tokens tokenUsage, firstEventMs int64) *sdk.Usage {
 	usage := &sdk.Usage{
 		Model:        modelID,
 		Currency:     usageCurrencyUSD,
-		FirstTokenMs: firstTokenMs,
+		FirstEventMs: firstEventMs,
 	}
 	setUsageTokens(usage, tokens)
 	return usage
