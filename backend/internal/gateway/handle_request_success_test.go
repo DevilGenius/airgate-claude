@@ -17,7 +17,9 @@ func TestHandleRequestOAuthSuccessPaths(t *testing.T) {
 	oldStore := sessionStore
 	sessionStore = &oauthSessionStore{sessions: map[string]*OAuthSession{}}
 	t.Cleanup(func() { sessionStore = oldStore })
-	sessionStore.Set("state", &OAuthSession{State: "state", CodeVerifier: "verifier"})
+	if err := sessionStore.Set("state", &OAuthSession{State: "state", CodeVerifier: "verifier"}); err != nil {
+		t.Fatal(err)
+	}
 
 	g := &AnthropicGateway{logger: testLogger()}
 	status, _, body, err := g.HandleRequest(context.Background(), "", "oauth/exchange", "", nil, []byte(`{"callback_url":"https://platform.claude.com/oauth/code/callback?code=auth-code&state=state"}`))

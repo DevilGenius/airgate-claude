@@ -55,7 +55,9 @@ func TestOAuthDevHandlerCallbackRefreshCookieAndBatch(t *testing.T) {
 	oldStore := sessionStore
 	sessionStore = &oauthSessionStore{sessions: map[string]*OAuthSession{}}
 	t.Cleanup(func() { sessionStore = oldStore })
-	sessionStore.Set("state", &OAuthSession{State: "state", CodeVerifier: "verifier"})
+	if err := sessionStore.Set("state", &OAuthSession{State: "state", CodeVerifier: "verifier"}); err != nil {
+		t.Fatal(err)
+	}
 
 	_, mux := newTestOAuthHandler(t)
 

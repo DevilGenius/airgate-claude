@@ -15,7 +15,9 @@ func TestOAuthSessionStore(t *testing.T) {
 	store := &oauthSessionStore{sessions: map[string]*OAuthSession{}}
 	now := time.Now()
 
-	store.Set("fresh", &OAuthSession{State: "fresh", CodeVerifier: "verifier", CreatedAt: now})
+	if err := store.Set("fresh", &OAuthSession{State: "fresh", CodeVerifier: "verifier", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	if got, ok := store.Get("fresh"); !ok || got.CodeVerifier != "verifier" {
 		t.Fatalf("Get fresh = %#v/%v", got, ok)
 	}
@@ -25,12 +27,16 @@ func TestOAuthSessionStore(t *testing.T) {
 		t.Fatalf("deleted session was returned")
 	}
 
-	store.Set("zero-created-at", &OAuthSession{State: "zero"})
+	if err := store.Set("zero-created-at", &OAuthSession{State: "zero"}); err != nil {
+		t.Fatal(err)
+	}
 	if got, ok := store.Get("zero-created-at"); !ok || got.CreatedAt.IsZero() {
 		t.Fatalf("Set should fill CreatedAt: %#v/%v", got, ok)
 	}
 
-	store.Set("expired", &OAuthSession{State: "expired", CreatedAt: now.Add(-oauthSessionTTL - time.Second)})
+	if err := store.Set("expired", &OAuthSession{State: "expired", CreatedAt: now.Add(-oauthSessionTTL - time.Second)}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := store.Get("expired"); ok {
 		t.Fatalf("expired session should not be returned")
 	}

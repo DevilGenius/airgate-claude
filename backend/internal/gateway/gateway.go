@@ -47,7 +47,7 @@ func (g *AnthropicGateway) Init(ctx sdk.PluginContext) error {
 		_, _, _, err := shared.Get(readyCtx, "readiness")
 		cancel()
 		if err != nil {
-			return fmt.Errorf("Core runtime state unavailable: %w", err)
+			return fmt.Errorf("core runtime state unavailable: %w", err)
 		}
 		sessionStore.shared = shared
 		defaultSessionCache.shared = shared
