@@ -28,7 +28,9 @@ type AnthropicGateway struct {
 }
 
 func (g *AnthropicGateway) Info() sdk.PluginInfo {
-	return BuildPluginInfo()
+	info := BuildPluginInfo()
+	info.Capabilities = append(info.Capabilities, sdk.CapabilityForHostMethod(sdk.RuntimeStateMethod))
+	return info
 }
 
 func (g *AnthropicGateway) Init(ctx sdk.PluginContext) error {
@@ -38,6 +40,17 @@ func (g *AnthropicGateway) Init(ctx sdk.PluginContext) error {
 	}
 	if g.logger == nil {
 		g.logger = slog.Default()
+	}
+	if hostAware, ok := ctx.(sdk.HostAware); ok && hostAware.Host() != nil {
+		shared := &sdk.RuntimeStateClient{Host: hostAware.Host()}
+		readyCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _, _, err := shared.Get(readyCtx, "readiness")
+		cancel()
+		if err != nil {
+			return fmt.Errorf("Core runtime state unavailable: %w", err)
+		}
+		sessionStore.shared = shared
+		defaultSessionCache.shared = shared
 	}
 
 	// 初始化连接池

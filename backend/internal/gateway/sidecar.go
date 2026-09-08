@@ -188,6 +188,12 @@ func (s *sidecarRunner) start() {
 
 // stop 停止所有 sidecar
 func (s *sidecarRunner) stop() {
+	s.beginDrain()
+	s.wg.Wait()
+	s.probes.Wait()
+}
+
+func (s *sidecarRunner) beginDrain() {
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
@@ -199,8 +205,6 @@ func (s *sidecarRunner) stop() {
 	}
 	close(s.jobs)
 	s.mu.Unlock()
-	s.wg.Wait()
-	s.probes.Wait()
 }
 
 // scheduleCountTokens 非阻塞投递 count_tokens 任务；队列满则丢弃（sidecar 流量不应反压主链路）

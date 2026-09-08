@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -53,6 +56,7 @@ type sessionEntry struct {
 
 // sessionCache accountID+conversation 指纹 → 固定 user_id
 type sessionCache struct {
+	shared          sdk.RuntimeState
 	mu              sync.Mutex
 	entries         map[string]sessionEntry
 	lastCleanupTime time.Time
@@ -91,6 +95,20 @@ func (c *sessionCache) stickyUserID(accountID int64, fingerprint string) string 
 		return newUUIDv4()
 	}
 	key := fmt.Sprintf("%d:%s", accountID, fingerprint)
+	if c.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		value, err := c.shared.Update(ctx, "sticky:"+key, func(old string) (string, error) {
+			if old != "" {
+				return old, nil
+			}
+			return newUUIDv4(), nil
+		})
+		if err != nil {
+			slog.Error("sticky_session_unavailable", "error", err)
+		}
+		return value
+	}
 	now := time.Now()
 
 	c.mu.Lock()

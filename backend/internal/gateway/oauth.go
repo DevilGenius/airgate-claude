@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	sdk "github.com/DevilGenius/airgate-sdk/sdkgo"
 	"net/http"
 	"net/url"
 	"strings"
@@ -61,6 +62,7 @@ type OAuthSession struct {
 
 // oauthSessionStore OAuth 会话存储
 type oauthSessionStore struct {
+	shared   sdk.RuntimeState
 	mu       sync.RWMutex
 	sessions map[string]*OAuthSession
 }
@@ -69,7 +71,12 @@ var sessionStore = &oauthSessionStore{
 	sessions: make(map[string]*OAuthSession),
 }
 
-func (s *oauthSessionStore) Set(state string, session *OAuthSession) {
+func (s *oauthSessionStore) Set(state string, session *OAuthSession) error {
+	if s.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return s.shared.Store(ctx, "oauth:"+state, session)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -81,9 +88,17 @@ func (s *oauthSessionStore) Set(state string, session *OAuthSession) {
 		s.deleteOldestLocked()
 	}
 	s.sessions[state] = session
+	return nil
 }
 
 func (s *oauthSessionStore) Get(state string) (*OAuthSession, bool) {
+	if s.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var session OAuthSession
+		found, err := s.shared.Load(ctx, "oauth:"+state, &session)
+		return &session, found && err == nil && time.Since(session.CreatedAt) <= oauthSessionTTL
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, ok := s.sessions[state]
@@ -98,6 +113,12 @@ func (s *oauthSessionStore) Get(state string) (*OAuthSession, bool) {
 }
 
 func (s *oauthSessionStore) Delete(state string) {
+	if s.shared != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.shared.Delete(ctx, "oauth:"+state)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, state)
@@ -131,11 +152,13 @@ func (g *AnthropicGateway) StartOAuth() (*OAuthStartResponse, error) {
 	}
 
 	// 保存会话
-	sessionStore.Set(state, &OAuthSession{
+	if err := sessionStore.Set(state, &OAuthSession{
 		State:        state,
 		CodeVerifier: codeVerifier,
 		CreatedAt:    time.Now(),
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	// 构建授权 URL
 	q := url.Values{}
@@ -159,11 +182,13 @@ func (g *AnthropicGateway) StartOAuth() (*OAuthStartResponse, error) {
 
 // HandleOAuthCallback 处理 OAuth 回调，用 code+state 交换 token
 func (g *AnthropicGateway) HandleOAuthCallback(ctx context.Context, code, state, proxyURL string) (*TokenResponse, error) {
-	session, ok := sessionStore.Get(state)
+	session, ok, stateErr := sessionStore.consume(ctx, state)
+	if stateErr != nil {
+		return nil, stateErr
+	}
 	if !ok {
 		return nil, fmt.Errorf("无效或已过期的 OAuth 会话")
 	}
-	sessionStore.Delete(state)
 
 	if time.Since(session.CreatedAt) > oauthSessionTTL {
 		return nil, fmt.Errorf("OAuth 会话已过期")
