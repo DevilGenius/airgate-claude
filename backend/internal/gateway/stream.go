@@ -40,6 +40,7 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	}
 	ctx, cancel := context.WithCancel(baseCtx)
 	defer cancel()
+	defer func() { _ = resp.Body.Close() }()
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), upstreamSSEMaxLineBytes)
@@ -62,29 +63,45 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 	idleTimer := time.NewTimer(sseIdleTimeout)
 	defer idleTimer.Stop()
 	eventLines := make([]string, 0, 4)
+	finish := func(err error) (sdk.ForwardOutcome, error) {
+		fillUsageCost(usage)
+		if err != nil {
+			outcome := streamAbortedOutcome(resp.StatusCode, err.Error(), usage)
+			outcome.Duration = time.Since(start)
+			return outcome, err
+		}
+		return sdk.ForwardOutcome{Kind: sdk.OutcomeSuccess, Upstream: sdk.UpstreamResponse{StatusCode: resp.StatusCode}, Usage: usage, Duration: time.Since(start)}, nil
+	}
+	flushEvent := func() (bool, error) {
+		terminal, terminalErr := anthropicTerminalEvent(eventLines)
+		if terminalErr != nil && !terminal {
+			return false, terminalErr
+		}
+		observeSSEEvent(eventLines, start, usage, &tokens, &timing)
+		if terminal {
+			sdk.BeginStreamCompletion(w)
+		}
+		if err := writeSSEEvent(w, eventLines); err != nil {
+			return false, fmt.Errorf("写入 SSE 响应失败: %w", err)
+		}
+		eventLines = eventLines[:0]
+		return terminal, terminalErr
+	}
 
 	for {
 		select {
 		case line, ok := <-lines:
 			if !ok {
-				elapsed := time.Since(start)
 				if err := <-scanErr; err != nil {
-					return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("读取上游 SSE 失败: %w", err)
+					return finish(fmt.Errorf("读取上游 SSE 失败: %w", err))
 				}
 				if len(eventLines) > 0 {
-					if err := writeSSEEvent(w, eventLines); err != nil {
-						_ = resp.Body.Close()
-						return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
+					eventLines = append(eventLines, "")
+					if terminal, err := flushEvent(); terminal || err != nil {
+						return finish(err)
 					}
-					observeSSEEvent(eventLines, start, usage, &tokens, &timing)
 				}
-				fillUsageCost(usage)
-				return sdk.ForwardOutcome{
-					Kind:     sdk.OutcomeSuccess,
-					Upstream: sdk.UpstreamResponse{StatusCode: resp.StatusCode},
-					Usage:    usage,
-					Duration: elapsed,
-				}, nil
+				return finish(fmt.Errorf("未收到上游 message_stop 事件"))
 			}
 			resetSSEIdleTimer(idleTimer)
 			eventLines = append(eventLines, line)
@@ -92,25 +109,41 @@ func handleStreamResponse(resp *http.Response, w http.ResponseWriter, start time
 				continue
 			}
 
-			if err := writeSSEEvent(w, eventLines); err != nil {
-				_ = resp.Body.Close()
-				return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), fmt.Errorf("写入 SSE 响应失败: %w", err)
+			if terminal, err := flushEvent(); terminal || err != nil {
+				return finish(err)
 			}
-			observeSSEEvent(eventLines, start, usage, &tokens, &timing)
-			eventLines = eventLines[:0]
 
 		case <-idleTimer.C:
 			err := fmt.Errorf("上游 SSE 空闲超时")
 			cancel()
 			_ = resp.Body.Close()
-			return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), err
+			return finish(err)
 
 		case <-ctx.Done():
 			err := ctx.Err()
 			_ = resp.Body.Close()
-			return streamAbortedOutcome(resp.StatusCode, err.Error(), usage), err
+			return finish(err)
 		}
 	}
+}
+
+func anthropicTerminalEvent(lines []string) (bool, error) {
+	for _, line := range lines {
+		data, ok := extractSSEData(line)
+		if !ok {
+			continue
+		}
+		switch gjson.Get(data, "type").String() {
+		case "message_stop":
+			if !gjson.Valid(data) {
+				return false, fmt.Errorf("上游 message_stop JSON 不完整")
+			}
+			return true, nil
+		case "error":
+			return true, fmt.Errorf("上游 SSE 错误: %s", gjson.Get(data, "error.message").String())
+		}
+	}
+	return false, nil
 }
 
 func writeSSEEvent(w http.ResponseWriter, lines []string) error {

@@ -48,6 +48,10 @@ func TestHandleStreamResponseSuccess(t *testing.T) {
 		`event: message_delta`,
 		`data: {"type":"message_delta","usage":{"output_tokens":5}}`,
 		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+		``,
 	}, "\n")
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
