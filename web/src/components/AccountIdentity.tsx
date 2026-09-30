@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { AccountSurfaceProps } from '@devilgenius/airgate-theme/plugin';
+import { AccountTypeIcon } from './AccountTypeIcon';
 
 type AccountLike = {
   type?: string;
@@ -27,28 +28,6 @@ const rowStyle: CSSProperties = {
   gap: '0.25rem',
 };
 
-const badgeStyle: CSSProperties = {
-  maxWidth: '100%',
-  overflow: 'hidden',
-  border: '1px solid var(--ag-glass-border)',
-  borderRadius: '0.25rem',
-  background: 'var(--ag-bg-surface)',
-  padding: '0 0.25rem',
-  color: 'var(--ag-text-secondary)',
-  fontSize: '0.625rem',
-  lineHeight: 1,
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-};
-
-const modeBadgeStyle: CSSProperties = {
-  ...badgeStyle,
-  borderColor: 'color-mix(in srgb, var(--ag-primary) 28%, transparent)',
-  background: 'color-mix(in srgb, var(--ag-primary) 12%, transparent)',
-  color: 'var(--ag-primary)',
-  fontWeight: 600,
-};
-
 export function AccountIdentity({ accountType, context }: AccountSurfaceProps) {
   const account = readAccount(context);
   const credentials = (context?.credentials as Record<string, string> | undefined) ?? account.credentials ?? {};
@@ -62,8 +41,7 @@ export function AccountIdentity({ accountType, context }: AccountSurfaceProps) {
 
   return (
     <div style={rowStyle}>
-      {type && <span style={badgeStyle}>{typeLabel(type)}</span>}
-      {mode && <span style={modeBadgeStyle} title={expiresAt ? `过期时间：${expiresAt}` : undefined}>{mode}</span>}
+      {type && <AccountTypeIcon type={type} label={[typeLabel(type), mode, expiresAt ? `过期时间：${expiresAt}` : ''].filter(Boolean).join(' · ')} />}
     </div>
   );
 }
