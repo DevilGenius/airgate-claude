@@ -5,16 +5,15 @@ type UsageContext = {
   reasoning_effort?: string;
 };
 
-const EFFORT_MAX_COLOR = 'rgb(148,163,184)';
 const EFFORT_ULTRA_COLOR = 'var(--ag-text)';
-const EFFORT_FALLBACK_COLOR = 'var(--ag-text-secondary)';
+const EFFORT_FALLBACK_COLOR = 'rgb(148,163,184)';
 
 const EFFORT_COLORS: Record<string, string> = {
   low: 'rgb(34,197,94)',
   medium: 'rgb(59,130,246)',
   high: 'rgb(249,115,22)',
   xhigh: 'rgb(239,68,68)',
-  max: EFFORT_MAX_COLOR,
+  max: EFFORT_ULTRA_COLOR,
   ultra: EFFORT_ULTRA_COLOR,
 };
 
